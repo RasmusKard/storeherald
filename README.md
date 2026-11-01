@@ -148,7 +148,7 @@ if (!res.ok) throw new Error(`ingest: ${res.status} ${await res.text()}`);
 
 ## State
 
-To keep Google Play's seen release states across restarts, point [`stateStore`](https://rasmuskard.github.io/storeherald/interfaces/ConfigFile.html#statestore) in the config at a module like this one.
+The server keeps Google Play's seen release states in memory, so it needs no disk or volume. To keep them across restarts, point [`stateStore`](https://rasmuskard.github.io/storeherald/interfaces/ConfigFile.html#statestore) in the config at a module like this one.
 
 <details>
 <summary>A file on disk</summary>
