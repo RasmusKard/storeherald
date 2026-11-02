@@ -1,7 +1,7 @@
 // End to end: run the Worker in local workerd with a config pointing a Slack target at a local fake, then post signed webhooks.
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { createHmac, randomBytes } from 'node:crypto';
+import { createHmac, generateKeyPairSync, randomBytes } from 'node:crypto';
 import { createServer } from 'node:http';
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -23,18 +23,24 @@ void test('worker in workerd: health check, signed webhooks are delivered, bad s
 
   const dir = mkdtempSync(join(tmpdir(), 'ews-'));
   const ingestKey = randomBytes(32);
+  const pkcs8 = { type: 'pkcs8', format: 'pem' } as const;
   const worker = await unstable_dev('src/worker.ts', {
     config: 'wrangler.jsonc',
     logLevel: 'none',
     experimental: { disableExperimentalWarning: true },
     vars: {
       EAS_SECRET: 'sixteen-chars-secret',
+      // Config loading checks both keys, the ASC one by signing, so the health check below fails if workerd can't sign with it.
+      ASC_KEY: generateKeyPairSync('ec', { namedCurve: 'P-256' }).privateKey.export(pkcs8),
+      PLAY_SA: JSON.stringify({ client_email: 'poller@acme.iam', private_key: generateKeyPairSync('rsa', { modulusLength: 2048 }).privateKey.export(pkcs8) }),
       STOREHERALD_CONFIG: `
 apps:
   myapp:
     name: My App
     eas: { secret: "\${EAS_SECRET}" }
     asc: { secret: asc-secret }
+ascApi: { issuerId: issuer, keyId: key, privateKey: "\${ASC_KEY}" }
+playApi: { serviceAccount: "\${PLAY_SA}" }
 ingest: { secret: "whsec_${ingestKey.toString('base64')}" }
 targets:
   - { id: releases, type: slack, url: "http://127.0.0.1:${(slack.address() as any).port}/hook" }

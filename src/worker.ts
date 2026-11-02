@@ -17,37 +17,36 @@ class HttpError extends Error {
     this.status = status;
   }
 }
-const httpError = (status: number, message: string) => new HttpError(status, message);
 
 /** Raw bytes, needed for HMAC checks. Capped well below the Workers platform limit, which is sized for uploads. */
 async function readBody(req: Request): Promise<Buffer> {
-  if (Number(req.headers.get('content-length') ?? 0) > MAX_BODY) throw httpError(413, 'body too large');
+  if (Number(req.headers.get('content-length') ?? 0) > MAX_BODY) throw new HttpError(413, 'body too large');
   const chunks: Uint8Array[] = [];
   let size = 0;
   for await (const chunk of req.body ?? []) {
     size += chunk.length;
-    if (size > MAX_BODY) throw httpError(413, 'body too large'); // chunked uploads have no content-length
+    if (size > MAX_BODY) throw new HttpError(413, 'body too large'); // chunked uploads have no content-length
     chunks.push(chunk);
   }
   return Buffer.concat(chunks);
 }
 
-function json(raw: Buffer): any {
+function json(raw: Buffer): unknown {
   try {
     return JSON.parse(raw.toString('utf8'));
   } catch {
-    throw httpError(400, 'invalid JSON');
+    throw new HttpError(400, 'invalid JSON');
   }
 }
 
 const header = (req: Request, name: string) => req.headers.get(name) ?? undefined;
 
 function ingest(cfg: Config, req: Request, raw: Buffer): Message[] {
-  if (!cfg.ingest) throw httpError(404, 'not found');
+  if (!cfg.ingest) throw new HttpError(404, 'not found');
   const h = { id: header(req, 'webhook-id'), timestamp: header(req, 'webhook-timestamp'), signature: header(req, 'webhook-signature') };
-  if (!verifyIngest(raw, h, cfg.ingest.secret)) throw httpError(401, 'bad signature');
+  if (!verifyIngest(raw, h, cfg.ingest.secret)) throw new HttpError(401, 'bad signature');
   const m = ingestToMessage(h.id!, json(raw));
-  if (typeof m === 'string') throw httpError(400, m);
+  if (typeof m === 'string') throw new HttpError(400, m);
   return [m];
 }
 
@@ -58,21 +57,21 @@ async function handle(cfg: Config, req: Request, path: string[]): Promise<Messag
   if (source === 'ingest' && path.length === 1) return ingest(cfg, req, raw);
 
   const app = appId ? cfg.apps.get(appId) : undefined;
-  if (path.length !== 2 || !app) throw httpError(404, 'not found');
+  if (path.length !== 2 || !app) throw new HttpError(404, 'not found');
 
   if (source === 'eas' && app.eas) {
-    if (!verifyEas(raw, header(req, 'expo-signature'), app.eas.secret)) throw httpError(401, 'bad signature');
+    if (!verifyEas(raw, header(req, 'expo-signature'), app.eas.secret)) throw new HttpError(401, 'bad signature');
     const payload = json(raw);
-    if (!isEasPayload(payload)) throw httpError(400, 'not an EAS build or submission webhook');
+    if (!isEasPayload(payload)) throw new HttpError(400, 'not an EAS build or submission webhook');
     return easToMessages(payload, app);
   }
   if (source === 'asc' && app.asc) {
-    if (!verifyAsc(raw, header(req, 'x-apple-signature'), app.asc.secret)) throw httpError(401, 'bad signature');
+    if (!verifyAsc(raw, header(req, 'x-apple-signature'), app.asc.secret)) throw new HttpError(401, 'bad signature');
     const event = json(raw);
-    if (!isAscEvent(event)) throw httpError(400, 'not an App Store Connect event');
-    return ascMessages(event, app, cfg.ascApi);
+    if (!isAscEvent(event)) throw new HttpError(400, 'not an App Store Connect event');
+    return await ascMessages(event, app, cfg.ascApi);
   }
-  throw httpError(404, 'not found');
+  throw new HttpError(404, 'not found');
 }
 
 export interface Env {
@@ -101,7 +100,7 @@ export default {
       const { cfg, router } = init(env); // also on health checks, so a broken config fails them
       if (req.method === 'POST') {
         if ((await router.deliver(await handle(cfg, req, path))) === 'retry') [status, text] = [503, 'delivery failed, please retry'];
-      } else if (!(req.method === 'GET' && path.join('/') === 'health_check')) throw httpError(404, 'not found'); // not 405: keeps bot probes (GET /, /favicon.ico) out of the warn log
+      } else if (!(req.method === 'GET' && path.join('/') === 'health_check')) throw new HttpError(404, 'not found'); // not 405: keeps bot probes (GET /, /favicon.ico) out of the warn log
     } catch (err) {
       if (err instanceof HttpError) {
         [status, text] = [err.status, err.message];
@@ -115,8 +114,11 @@ export default {
   },
 
   async scheduled(_controller: unknown, env: Env): Promise<void> {
-    const { cfg, router } = init(env);
-    if (cfg.playApi && !env.STATE) return log('error', 'no STATE KV binding: Google Play is not polled');
-    await pollPlay(cfg, router, env.STATE!); // only read when playApi is set
+    try {
+      const { cfg, router } = init(env);
+      await pollPlay(cfg, router, env.STATE);
+    } catch (err) {
+      log('error', 'cron run failed', { err: String(err) }); // as a log line, so error alerts see a broken config here too
+    }
   },
 };

@@ -49,9 +49,17 @@ void test('config: loaded from STOREHERALD_CONFIG; a binding is not a value', ()
   assert.throws(() => loadConfig({}), /STOREHERALD_CONFIG/);
 });
 
+void test('config: play settings without playApi fail loading', () => {
+  const apps = { myapp: { name: 'My App', play: { packageName: 'com.acme.myapp', tracks: ['production'] } } };
+  assert.throws(() => parseConfig({ ...baseConfig, apps }), /apps\.myapp\.play needs playApi/);
+});
+
 void test('config: errors never echo secrets', () => {
   const key = 'eyJ0eXBlIjoic2VydmljZV9hY2NvdW50IiwicHJpdmF0ZV9rZXkiOiJTRUNSRVQifQ';
   assert.throws(() => parseConfig({ ...baseConfig, playApi: { serviceAccount: key } }), (e: Error) => !e.message.includes(key));
+  const pem = '-----BEGIN PRIVATE KEY-----\nSECRET\n-----END PRIVATE KEY-----';
+  assert.throws(() => parseConfig({ ...baseConfig, ascApi: { issuerId: 'i', keyId: 'k', privateKey: pem } }),
+    (e: Error) => e.message === 'config: ascApi.privateKey is not a usable private key');
   const url = 'hooks.slack.com/services/T/B/SECRET';
   assert.throws(() => parseConfig({ ...baseConfig, targets: [{ id: 'a', type: 'slack', url }] }), (e: Error) => !e.message.includes('SECRET'));
 });

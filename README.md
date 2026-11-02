@@ -25,17 +25,20 @@ When a target fails:
 
 ## Install
 
-Needs Node 24 or later and a Cloudflare account. The Workers free plan is enough.
+Needs Node 24 or later and a Cloudflare account. Deploy a release, not `main`: the [config reference](https://rasmuskard.github.io/storeherald/interfaces/ConfigFile.html) describes the latest release.
 
 ```sh
 git clone https://github.com/RasmusKard/storeherald.git
 cd storeherald
+git checkout "$(git tag --sort=-v:refname | head -1)"
 npm ci
 ```
 
+To upgrade, run `git fetch --tags`, check out the newest tag the same way, then run `npm ci` and `npx wrangler deploy`. [`CHANGELOG.md`](CHANGELOG.md) lists each release's changes.
+
 ## Usage
 
-1. Write the config: your apps, targets and routes. Start from [`config.example.yaml`](config.example.yaml) and remove the sources you don't use: every `${VAR}` must be set. A variable holds at most 5 KB, the config included, so put each key inline in its own variable.
+1. Write the config: your apps, targets and routes. Start from [`config.example.yaml`](config.example.yaml) and remove the sources you don't use: every `${VAR}` must be set. Put each key inline in its own variable, since Workers [limits the size of each one](https://developers.cloudflare.com/workers/platform/limits/).
 2. Set the config and every variable it references as secrets:
 
    ```sh
@@ -43,7 +46,7 @@ npm ci
    npx wrangler secret put EAS_WEBHOOK_SECRET
    ```
 
-3. If you don't use Google Play, remove `triggers` and `kv_namespaces` from [`wrangler.jsonc`](wrangler.jsonc). Otherwise set its cron schedule to how often to poll.
+3. If you don't use Google Play, remove `triggers` and `kv_namespaces` from [`wrangler.jsonc`](wrangler.jsonc). Otherwise set its cron schedule to how often to poll, at most every 2 minutes: a faster schedule can post a change twice.
 4. Deploy with `npx wrangler deploy`. It prints the Worker's URL.
 5. [Connect the sources](#sources).
 6. Logs are JSON lines in the Worker's logs. Alert on those with `"level":"error"` and point your uptime check at `GET /health_check`, which fails when the config does.

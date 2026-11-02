@@ -88,11 +88,11 @@ export interface StateStore {
 }
 
 /** One poll of every track. A track whose change no target got isn't saved, so the next run sends it again. */
-export async function pollPlay(cfg: Pick<Config, 'playApi' | 'apps'>, router: Router, store: StateStore) {
+export async function pollPlay(cfg: Pick<Config, 'playApi' | 'apps'>, router: Router, store: StateStore | undefined) {
   const api = cfg.playApi;
   const apps = [...cfg.apps.values()].filter((a) => a.play);
-  if (!api) for (const a of apps) log('warn', 'app has play settings but there is no playApi: Google Play is not polled', { app: a.id });
   if (!api || !apps.length) return;
+  if (!store) return log('error', 'no STATE KV binding: Google Play is not polled');
 
   let raw: string | null;
   try {

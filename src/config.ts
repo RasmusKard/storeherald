@@ -1,4 +1,5 @@
 import { createPrivateKey } from 'node:crypto';
+import { signJwt } from './sources/shared.ts';
 import { parse } from 'yaml';
 import { SEVERITIES, type Message, type Severity } from './message.ts';
 import type { IngestEvent } from './sources/ingest.ts';
@@ -48,7 +49,7 @@ export interface ConfigApp {
   eas?: ConfigWebhook;
   /** Receives App Store Connect webhooks at `/asc/<id>`. */
   asc?: ConfigWebhook;
-  /** Polls Google Play, which has no release webhooks. Ignored, with a warning at startup, unless {@link ConfigFile.playApi} is set. */
+  /** Polls Google Play, which has no release webhooks. Needs {@link ConfigFile.playApi}. */
   play?: ConfigPlay;
 }
 
@@ -195,6 +196,14 @@ function inline(v: string, start: string, where: string): string {
   if (v.trimStart().startsWith(start)) return v;
   throw new Error(`config: ${where} must be inline, starting with ${start}`);
 }
+// node:crypto's error names no field, and must not be replaced by one that quotes the key.
+function checkKey(where: string, check: () => unknown) {
+  try {
+    check();
+  } catch {
+    throw new Error(`config: ${where} is not a usable private key`);
+  }
+}
 function bool(o: Obj, k: string, where: string, fallback: boolean): boolean {
   const v = o[k] ?? fallback;
   if (v === false || v === 'false') return false;
@@ -238,7 +247,8 @@ function parseApps(v: unknown): Map<string, AppConfig> {
 function parseAscApi(v: unknown): AscApi {
   const a = obj(v, 'ascApi', keysOf<ConfigAscApi>({ issuerId: true, keyId: true, privateKey: true }));
   const pem = inline(str(a, 'privateKey', 'ascApi'), '-----BEGIN', 'ascApi.privateKey');
-  createPrivateKey(pem); // fail at load, not on the first App Store Connect event
+  // Signs rather than parses: workerd rejects the KeyObject form here, and only signing shows it.
+  checkKey('ascApi.privateKey', () => signJwt({}, {}, { key: pem, dsaEncoding: 'ieee-p1363' }));
   return { issuerId: str(a, 'issuerId', 'ascApi'), keyId: str(a, 'keyId', 'ascApi'), privateKey: pem };
 }
 
@@ -252,6 +262,7 @@ function parsePlayApi(v: unknown): PlayApi {
     throw new Error('config: playApi.serviceAccount is not valid JSON'); // not err.message: it quotes the private key
   }
   if (typeof sa?.client_email !== 'string' || typeof sa.private_key !== 'string') throw new Error('config: playApi.serviceAccount is not a service-account key JSON');
+  checkKey('playApi.serviceAccount private_key', () => createPrivateKey(sa.private_key as string)); // fail at load, not on every poll
   return { serviceAccount: { client_email: sa.client_email, private_key: sa.private_key } };
 }
 
@@ -306,10 +317,14 @@ function parseRoutes(v: unknown, targets: Map<string, TargetInstance>): Route[] 
 export function parseConfig(raw: unknown): Config {
   const root = obj(raw, 'root', keysOf<ConfigFile>({ apps: true, ascApi: true, playApi: true, ingest: true, targets: true, routes: true }));
   const targets = parseTargets(root.targets);
+  const apps = parseApps(root.apps);
+  const playApi = root.playApi == null ? undefined : parsePlayApi(root.playApi);
+  const unpolled = [...apps.values()].find((a) => a.play && !playApi);
+  if (unpolled) throw new Error(`config: apps.${unpolled.id}.play needs playApi`);
   return {
-    apps: parseApps(root.apps),
+    apps,
     ascApi: root.ascApi == null ? undefined : parseAscApi(root.ascApi),
-    playApi: root.playApi == null ? undefined : parsePlayApi(root.playApi),
+    playApi,
     ingest: root.ingest == null ? undefined : parseIngest(root.ingest),
     targets,
     routes: parseRoutes(root.routes, targets),
