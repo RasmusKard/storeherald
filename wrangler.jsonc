@@ -1,0 +1,12 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "storeherald",
+  "main": "src/worker.ts",
+  "compatibility_date": "2026-11-01",
+  "compatibility_flags": ["nodejs_compat"],
+  // The Google Play poll interval. Remove it if you don't use Google Play.
+  "triggers": { "crons": ["*/15 * * * *"] },
+  // Google Play states seen. Wrangler creates the namespace on the first deploy.
+  "kv_namespaces": [{ "binding": "STATE" }],
+  "observability": { "enabled": true }
+}

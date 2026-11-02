@@ -1,23 +1,16 @@
-// End to end: start the real server with a config pointing a Slack target at a local fake, then post signed webhooks.
+// End to end: run the Worker in local workerd with a config pointing a Slack target at a local fake, then post signed webhooks.
 import assert from 'node:assert/strict';
-import { execFile, spawn } from 'node:child_process';
+import { execFile } from 'node:child_process';
 import { createHmac, randomBytes } from 'node:crypto';
 import { createServer } from 'node:http';
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
-import { connect, createServer as createNetServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { promisify } from 'node:util';
+import { unstable_dev } from 'wrangler';
 
-const freePort = () => new Promise<number>((resolve) => {
-  const s = createNetServer().listen(0, () => {
-    const { port } = s.address() as { port: number };
-    s.close(() => resolve(port));
-  });
-});
-
-void test('server: health check, signed webhooks are delivered, bad signatures rejected', async (t) => {
+void test('worker in workerd: health check, signed webhooks are delivered, bad signatures rejected', async (t) => {
   const posts: { text: string }[] = [];
   const slack = createServer(async (req, res) => {
     let body = '';
@@ -29,10 +22,14 @@ void test('server: health check, signed webhooks are delivered, bad signatures r
   t.after(() => slack.close());
 
   const dir = mkdtempSync(join(tmpdir(), 'ews-'));
-  const port = await freePort();
   const ingestKey = randomBytes(32);
-  writeFileSync(join(dir, 'config.yaml'), `
-port: ${port}
+  const worker = await unstable_dev('src/worker.ts', {
+    config: 'wrangler.jsonc',
+    logLevel: 'none',
+    experimental: { disableExperimentalWarning: true },
+    vars: {
+      EAS_SECRET: 'sixteen-chars-secret',
+      STOREHERALD_CONFIG: `
 apps:
   myapp:
     name: My App
@@ -43,24 +40,15 @@ targets:
   - { id: releases, type: slack, url: "http://127.0.0.1:${(slack.address() as any).port}/hook" }
 routes:
   - { types: ["build.*", "update.published"], targets: [releases] }
-`);
-  const proc = spawn(process.execPath, ['src/main.ts', join(dir, 'config.yaml')], { env: { ...process.env, EAS_SECRET: 'sixteen-chars-secret' } });
-  t.after(() => proc.kill());
-  await new Promise<void>((resolve, reject) => {
-    proc.stdout.on('data', (d) => String(d).includes('listening') && resolve());
-    let err = '';
-    proc.stderr.on('data', (d) => (err += d));
-    proc.on('exit', (code) => reject(new Error(`server exited ${code}: ${err}`)));
+`,
+    },
   });
+  t.after(() => worker.stop());
+  const base = `http://${worker.address}:${worker.port}`;
   const post = (path: string, body: string, headers: Record<string, string>) =>
-    fetch(`http://127.0.0.1:${port}${path}`, { method: 'POST', body, headers }).then((r) => r.status);
+    fetch(`${base}${path}`, { method: 'POST', body, headers }).then((r) => r.status);
 
-  // A malformed request-target used to crash the process.
-  await new Promise<void>((done) => {
-    const sock = connect(port, '127.0.0.1', () => sock.write('GET //[ HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n'));
-    sock.on('data', () => {}).on('close', () => done()).on('error', () => done());
-  });
-  assert.equal((await fetch(`http://127.0.0.1:${port}/health_check`)).status, 200);
+  assert.equal((await fetch(`${base}/health_check`)).status, 200);
 
   const eas = JSON.stringify({ id: 'b1', buildDetailsPageUrl: 'https://expo.dev/b1', platform: 'ios', status: 'finished', metadata: { appVersion: '1.0.0' } });
   assert.equal(await post('/eas/myapp', eas, { 'expo-signature': 'sha1=bad' }), 401);
@@ -77,7 +65,7 @@ routes:
   writeFileSync(join(dir, 'post-event.mjs'), example);
   const update = JSON.stringify({ type: 'update.published', title: 'OTA update published' });
   await promisify(execFile)(process.execPath, [join(dir, 'post-event.mjs'), update], {
-    env: { ...process.env, INGEST_URL: `http://127.0.0.1:${port}/ingest`, INGEST_SECRET: `whsec_${ingestKey.toString('base64')}` },
+    env: { ...process.env, INGEST_URL: `${base}/ingest`, INGEST_SECRET: `whsec_${ingestKey.toString('base64')}` },
   });
   assert.match(posts[1].text, /OTA update published/);
 });
