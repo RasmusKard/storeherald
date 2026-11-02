@@ -1,5 +1,16 @@
 # Changelog
 
+## [2.0.0](https://github.com/RasmusKard/storeherald/compare/v1.0.0...v2.0.0) (2026-11-02)
+
+
+### ⚠ BREAKING CHANGES
+
+* Run as a Cloudflare Worker ([#13](https://github.com/RasmusKard/storeherald/issues/13))
+
+### Features
+
+* Run as a Cloudflare Worker ([#13](https://github.com/RasmusKard/storeherald/issues/13)) ([bbdbc4a](https://github.com/RasmusKard/storeherald/commit/bbdbc4a273766cbb1cb0be5c37608e133be66769))
+
 ## 1.0.0 (2026-10-30)
 
 

@@ -1,6 +1,6 @@
 {
   "name": "storeherald",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "A Cloudflare Worker that posts Expo release events from EAS, App Store Connect and Google Play to Slack, Discord and Teams",
   "license": "MIT",
   "private": true,
