@@ -1,4 +1,4 @@
-import { sign, timingSafeEqual, type KeyLike, type SignKeyObjectInput } from 'node:crypto';
+import { sign, timingSafeEqual } from 'node:crypto';
 import type { Severity } from '../message.ts';
 
 /** Constant-time string compare. timingSafeEqual throws on a byte-length mismatch (non-ASCII headers), so compare buffers. */
@@ -28,7 +28,7 @@ export async function fetchJson(what: string, url: string, init: RequestInit = {
 
 const b64u = (x: object) => Buffer.from(JSON.stringify(x)).toString('base64url');
 /** Compact JWS signed with SHA-256. */
-export function signJwt(header: object, claims: object, key: KeyLike | SignKeyObjectInput): string {
+export function signJwt(header: object, claims: object, key: Parameters<typeof sign>[2]): string {
   const input = `${b64u(header)}.${b64u(claims)}`;
   return `${input}.${sign('sha256', Buffer.from(input), key).toString('base64url')}`;
 }

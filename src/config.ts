@@ -1,6 +1,5 @@
-import { readFileSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
-import { createPrivateKey, type KeyObject } from 'node:crypto';
+import { createPrivateKey } from 'node:crypto';
+import { signJwt } from './sources/shared.ts';
 import { parse } from 'yaml';
 import { SEVERITIES, type Message, type Severity } from './message.ts';
 import type { IngestEvent } from './sources/ingest.ts';
@@ -13,27 +12,14 @@ import { DEFAULTS } from './config.defaults.ts';
 const TARGET_TYPES: Record<string, Target<any>> = { slack, discord, teams };
 
 /**
- * The config file: YAML, read at startup from the path given as the server's argument (`config.yaml` when none is),
- * or from the `STOREHERALD_CONFIG` environment variable when it's set, for hosts that can't mount a file. An unknown key
- * fails startup.
+ * The config: YAML in the Worker's `STOREHERALD_CONFIG` variable, read on the first request or cron run. An unknown key
+ * fails it.
  *
- * `"${VAR}"` in a string value is replaced with the environment variable `VAR`, and startup fails when it's unset.
+ * `"${VAR}"` in a string value is replaced with the Worker variable or secret `VAR`, and loading fails when it's unset.
  * Quote it: inside `{ ... }` an unquoted `${VAR}` is a YAML syntax error. Numbers and booleans may be strings, so they
- * can come from `"${VAR}"` too. Relative paths resolve against the config file's folder, or
- * the working directory for `STOREHERALD_CONFIG`.
+ * can come from `"${VAR}"` too.
  */
 export interface ConfigFile {
-  /**
-   * The port to listen on.
-   * @default `8080`
-   */
-  port?: number;
-  /**
-   * A path to a module exporting `get(key)` and `set(key, value)`, named or on a default export, where the Google Play
-   * poller keeps the release states it has seen. Values are strings. `get` returns `undefined` when nothing is stored
-   * and throws on errors, which skips that poll. When unset, states are kept in memory and lost on restart.
-   */
-  stateStore?: string;
   /**
    * The apps, by id. The id may contain a-z, 0-9 and `-`. It is in the webhook URLs (`/eas/<id>`, `/asc/<id>`) and is
    * the `app` label routes match on.
@@ -63,7 +49,7 @@ export interface ConfigApp {
   eas?: ConfigWebhook;
   /** Receives App Store Connect webhooks at `/asc/<id>`. */
   asc?: ConfigWebhook;
-  /** Polls Google Play, which has no release webhooks. Ignored, with a warning at startup, unless {@link ConfigFile.playApi} is set. */
+  /** Polls Google Play, which has no release webhooks. Needs {@link ConfigFile.playApi}. */
   play?: ConfigPlay;
 }
 
@@ -93,20 +79,14 @@ export interface ConfigAscApi {
   issuerId: string;
   /** The key's Key ID. */
   keyId: string;
-  /** A path to the `.p8` key file, or the PEM itself. */
+  /** The `.p8` key's PEM. */
   privateKey: string;
 }
 
 /** A Google Cloud service account with read-only access to the apps in Play Console. */
 export interface ConfigPlayApi {
-  /** A path to the service account's JSON key file, or the JSON itself. */
+  /** The service account's JSON key. Play is polled on the Worker's cron schedule, in `wrangler.jsonc`. */
   serviceAccount: string;
-  /**
-   * Whole minutes between polls, from 1 to 1440. After a poll where every track failed, the wait doubles, up to 60
-   * minutes, until a track succeeds. A track that fails is logged at `error` level.
-   * @default `15`
-   */
-  intervalMinutes?: number;
 }
 
 /** Settings for `POST /ingest`. The body is an {@link IngestEvent}. */
@@ -178,15 +158,13 @@ export interface TargetInstance {
 export interface AscApi {
   issuerId: string;
   keyId: string;
-  privateKey: KeyObject;
+  /** PEM, not a KeyObject: workerd's sign() rejects a KeyObject with dsaEncoding. */
+  privateKey: string;
 }
 export interface PlayApi {
   serviceAccount: { client_email: string; private_key: string };
-  intervalMinutes: number;
 }
 export interface Config {
-  port: number;
-  stateStore?: string;
   apps: Map<string, AppConfig>;
   ascApi?: AscApi;
   playApi?: PlayApi;
@@ -213,13 +191,17 @@ function strList(o: Obj, k: string, where: string): string[] {
   if (!Array.isArray(v) || !v.length || !v.every((x) => typeof x === 'string' && x)) throw new Error(`config: ${where}.${k} must be a non-empty list of strings`);
   return v;
 }
-// Errors never echo the value: a mistyped inline secret would be printed as a "path".
-function inlineOrFile(v: string, inlineStart: string, baseDir: string, where: string): string {
-  if (v.trimStart().startsWith(inlineStart)) return v;
+// Errors never echo the value: it's a secret.
+function inline(v: string, start: string, where: string): string {
+  if (v.trimStart().startsWith(start)) return v;
+  throw new Error(`config: ${where} must be inline, starting with ${start}`);
+}
+// node:crypto's error names no field, and must not be replaced by one that quotes the key.
+function checkKey(where: string, check: () => unknown) {
   try {
-    return readFileSync(resolve(baseDir, v), 'utf8');
-  } catch (err) {
-    throw new Error(`config: ${where} is neither inline (starting with ${inlineStart}) nor a readable file path (${(err as { code?: string }).code ?? 'unreadable'})`);
+    check();
+  } catch {
+    throw new Error(`config: ${where} is not a usable private key`);
   }
 }
 function bool(o: Obj, k: string, where: string, fallback: boolean): boolean {
@@ -228,18 +210,13 @@ function bool(o: Obj, k: string, where: string, fallback: boolean): boolean {
   if (v === true || v === 'true') return true; // "true" too: ${VAR} interpolation always yields strings
   throw new Error(`config: ${where}.${k} must be true or false`);
 }
-function int(o: Obj, k: string, where: string, fallback: number, min: number, max: number): number {
-  const v = Number(o[k] ?? fallback); // a string from "${VAR}" too
-  if (!Number.isInteger(v) || v < min || v > max) throw new Error(`config: ${where}${k} must be a number from ${min} to ${max}`);
-  return v;
-}
 
 /** Replace ${VAR} in string values only, after YAML parsing, so secrets containing : # or quotes can't break the YAML. */
-export function interpolate(v: unknown, env: Record<string, string | undefined>): unknown {
+export function interpolate(v: unknown, env: Record<string, unknown>): unknown {
   if (typeof v === 'string')
     return v.replace(/\$\{(\w+)\}/g, (_, name: string) => {
       const value = env[name];
-      if (value === undefined) throw new Error(`config: environment variable ${name} is not set`);
+      if (typeof value !== 'string') throw new Error(`config: variable ${name} is not set`); // a binding (KV) isn't a value
       return value;
     });
   if (Array.isArray(v)) return v.map((x) => interpolate(x, env));
@@ -267,15 +244,17 @@ function parseApps(v: unknown): Map<string, AppConfig> {
   return apps;
 }
 
-function parseAscApi(v: unknown, baseDir: string): AscApi {
+function parseAscApi(v: unknown): AscApi {
   const a = obj(v, 'ascApi', keysOf<ConfigAscApi>({ issuerId: true, keyId: true, privateKey: true }));
-  const pem = inlineOrFile(str(a, 'privateKey', 'ascApi'), '-----BEGIN', baseDir, 'ascApi.privateKey');
-  return { issuerId: str(a, 'issuerId', 'ascApi'), keyId: str(a, 'keyId', 'ascApi'), privateKey: createPrivateKey(pem) };
+  const pem = inline(str(a, 'privateKey', 'ascApi'), '-----BEGIN', 'ascApi.privateKey');
+  // Signs rather than parses: workerd rejects the KeyObject form here, and only signing shows it.
+  checkKey('ascApi.privateKey', () => signJwt({}, {}, { key: pem, dsaEncoding: 'ieee-p1363' }));
+  return { issuerId: str(a, 'issuerId', 'ascApi'), keyId: str(a, 'keyId', 'ascApi'), privateKey: pem };
 }
 
-function parsePlayApi(v: unknown, baseDir: string): PlayApi {
-  const p = obj(v, 'playApi', keysOf<ConfigPlayApi>({ serviceAccount: true, intervalMinutes: true }));
-  const text = inlineOrFile(str(p, 'serviceAccount', 'playApi'), '{', baseDir, 'playApi.serviceAccount');
+function parsePlayApi(v: unknown): PlayApi {
+  const p = obj(v, 'playApi', keysOf<ConfigPlayApi>({ serviceAccount: true }));
+  const text = inline(str(p, 'serviceAccount', 'playApi'), '{', 'playApi.serviceAccount');
   let sa: { client_email?: unknown; private_key?: unknown } | null;
   try {
     sa = JSON.parse(text);
@@ -283,10 +262,8 @@ function parsePlayApi(v: unknown, baseDir: string): PlayApi {
     throw new Error('config: playApi.serviceAccount is not valid JSON'); // not err.message: it quotes the private key
   }
   if (typeof sa?.client_email !== 'string' || typeof sa.private_key !== 'string') throw new Error('config: playApi.serviceAccount is not a service-account key JSON');
-  return {
-    serviceAccount: { client_email: sa.client_email, private_key: sa.private_key },
-    intervalMinutes: int(p, 'intervalMinutes', 'playApi.', DEFAULTS.ConfigPlayApi.intervalMinutes, 1, 24 * 60),
-  };
+  checkKey('playApi.serviceAccount private_key', () => createPrivateKey(sa.private_key as string)); // fail at load, not on every poll
+  return { serviceAccount: { client_email: sa.client_email, private_key: sa.private_key } };
 }
 
 function parseIngest(v: unknown): ConfigIngest {
@@ -337,22 +314,24 @@ function parseRoutes(v: unknown, targets: Map<string, TargetInstance>): Route[] 
   });
 }
 
-export function parseConfig(raw: unknown, baseDir = '.'): Config {
-  const root = obj(raw, 'root', keysOf<ConfigFile>({ port: true, stateStore: true, apps: true, ascApi: true, playApi: true, ingest: true, targets: true, routes: true }));
+export function parseConfig(raw: unknown): Config {
+  const root = obj(raw, 'root', keysOf<ConfigFile>({ apps: true, ascApi: true, playApi: true, ingest: true, targets: true, routes: true }));
   const targets = parseTargets(root.targets);
+  const apps = parseApps(root.apps);
+  const playApi = root.playApi == null ? undefined : parsePlayApi(root.playApi);
+  const unpolled = [...apps.values()].find((a) => a.play && !playApi);
+  if (unpolled) throw new Error(`config: apps.${unpolled.id}.play needs playApi`);
   return {
-    port: int(root, 'port', '', DEFAULTS.ConfigFile.port, 1, 65535),
-    stateStore: root.stateStore == null ? undefined : resolve(baseDir, str(root, 'stateStore', 'root')),
-    apps: parseApps(root.apps),
-    ascApi: root.ascApi == null ? undefined : parseAscApi(root.ascApi, baseDir),
-    playApi: root.playApi == null ? undefined : parsePlayApi(root.playApi, baseDir),
+    apps,
+    ascApi: root.ascApi == null ? undefined : parseAscApi(root.ascApi),
+    playApi,
     ingest: root.ingest == null ? undefined : parseIngest(root.ingest),
     targets,
     routes: parseRoutes(root.routes, targets),
   };
 }
 
-export function loadConfig(path: string, env: Record<string, string | undefined> = process.env): Config {
-  const inline = env.STOREHERALD_CONFIG;
-  return parseConfig(interpolate(parse(inline || readFileSync(path, 'utf8')), env), inline ? '.' : dirname(path));
+export function loadConfig(env: Record<string, unknown>): Config {
+  if (typeof env.STOREHERALD_CONFIG !== 'string') throw new Error('config: the STOREHERALD_CONFIG variable is not set');
+  return parseConfig(interpolate(parse(env.STOREHERALD_CONFIG), env));
 }

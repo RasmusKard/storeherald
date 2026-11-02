@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { generateKeyPairSync } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import { parse } from 'yaml';
@@ -24,9 +25,12 @@ const baseConfig = {
 
 void test('config: config.example.yaml parses', () => {
   const raw = parse(readFileSync('config.example.yaml', 'utf8'));
-  delete raw.ascApi; // their key files aren't in the repo
-  delete raw.playApi;
+  const pkcs8 = { type: 'pkcs8', format: 'pem' } as const;
   const env = {
+    ASC_ISSUER_ID: 'issuer',
+    ASC_KEY_ID: 'key',
+    ASC_PRIVATE_KEY: generateKeyPairSync('ec', { namedCurve: 'P-256' }).privateKey.export(pkcs8),
+    PLAY_SERVICE_ACCOUNT: JSON.stringify({ client_email: 'poller@acme.iam', private_key: generateKeyPairSync('rsa', { modulusLength: 2048 }).privateKey.export(pkcs8) }),
     EAS_WEBHOOK_SECRET: 'sixteen-chars-secret',
     ASC_WEBHOOK_SECRET: 'asc-secret',
     INGEST_SECRET: 'whsec_' + Buffer.alloc(32, 7).toString('base64'),
@@ -37,15 +41,25 @@ void test('config: config.example.yaml parses', () => {
   assert.equal(parseConfig(interpolate(raw, env)).routes.length, 4);
 });
 
-void test('config: STOREHERALD_CONFIG is used instead of the file', () => {
+void test('config: loaded from STOREHERALD_CONFIG; a binding is not a value', () => {
   const yaml = 'apps: {}\ntargets: [{ id: a, type: slack, url: "${SLACK}" }]\nroutes: [{ types: ["*"], targets: [a] }]\n';
-  const cfg = loadConfig('missing.yaml', { STOREHERALD_CONFIG: yaml, SLACK: 'https://hooks.slack.com/services/x' });
+  const cfg = loadConfig({ STOREHERALD_CONFIG: yaml, SLACK: 'https://hooks.slack.com/services/x' });
   assert.deepEqual([...cfg.targets.keys()], ['a']);
+  assert.throws(() => loadConfig({ STOREHERALD_CONFIG: yaml, SLACK: { get() {} } }), /SLACK is not set/);
+  assert.throws(() => loadConfig({}), /STOREHERALD_CONFIG/);
+});
+
+void test('config: play settings without playApi fail loading', () => {
+  const apps = { myapp: { name: 'My App', play: { packageName: 'com.acme.myapp', tracks: ['production'] } } };
+  assert.throws(() => parseConfig({ ...baseConfig, apps }), /apps\.myapp\.play needs playApi/);
 });
 
 void test('config: errors never echo secrets', () => {
   const key = 'eyJ0eXBlIjoic2VydmljZV9hY2NvdW50IiwicHJpdmF0ZV9rZXkiOiJTRUNSRVQifQ';
   assert.throws(() => parseConfig({ ...baseConfig, playApi: { serviceAccount: key } }), (e: Error) => !e.message.includes(key));
+  const pem = '-----BEGIN PRIVATE KEY-----\nSECRET\n-----END PRIVATE KEY-----';
+  assert.throws(() => parseConfig({ ...baseConfig, ascApi: { issuerId: 'i', keyId: 'k', privateKey: pem } }),
+    (e: Error) => e.message === 'config: ascApi.privateKey is not a usable private key');
   const url = 'hooks.slack.com/services/T/B/SECRET';
   assert.throws(() => parseConfig({ ...baseConfig, targets: [{ id: 'a', type: 'slack', url }] }), (e: Error) => !e.message.includes('SECRET'));
 });

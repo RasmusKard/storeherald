@@ -1,6 +1,7 @@
 node_modules
-play-state.json
 config.yaml
 .env
 secrets
 build
+.wrangler
+.dev.vars

@@ -1,8 +1,8 @@
 # storeherald
 
-**A server that posts an Expo app's builds, store reviews and releases to Slack, Discord and Microsoft Teams.**
+**A Cloudflare Worker that posts an Expo app's builds, store reviews and releases to Slack, Discord and Microsoft Teams.**
 
-Routes in `config.yaml` pick which events go where:
+Routes in the config pick which events go where:
 
 ```yaml
 routes:
@@ -18,71 +18,42 @@ The [config reference](https://rasmuskard.github.io/storeherald/interfaces/Confi
 
 When a target fails:
 
-- If it's down (no reply, a timeout, a 429 or a 5xx) and no target got the event, the server replies 503. EAS resends it a few times, an `/ingest` caller should resend it, and App Store Connect needs a resend by hand (see [Limits](#limits)). The Google Play poller retries on its next poll.
+- If it's down (no reply, a timeout, a 429 or a 5xx) and no target got the event, the Worker replies 503. EAS resends it a few times, an `/ingest` caller should resend it, and App Store Connect needs a resend by hand (see [Limits](#limits)). The Google Play poller retries on its next poll.
 - If another target got it, the sender isn't asked to resend. The failure is logged at `error` level.
 - If it rejects the post with any other 4xx, such as for a deleted webhook, the sender isn't asked to resend either. The failure is logged at `error` level.
 - A message can occasionally be posted twice: a post that timed out is retried even if it landed, and a resent event repeats its messages that did get through.
 
 ## Install
 
-Run the Docker image, `ghcr.io/rasmuskard/storeherald`, for `linux/amd64` and `linux/arm64`. It's tagged with each release's version (`1.2.3`, `1.2`, `1`) and `latest`. [`CHANGELOG.md`](CHANGELOG.md) lists each release's changes.
-
-Or run from source, with Node 24 or later. It runs the TypeScript directly, with no build step:
+Needs Node 24 or later and a Cloudflare account. Deploy a release, not `main`: the [config reference](https://rasmuskard.github.io/storeherald/interfaces/ConfigFile.html) describes the latest release.
 
 ```sh
 git clone https://github.com/RasmusKard/storeherald.git
 cd storeherald
+git checkout "$(git tag --sort=-v:refname | head -1)"
 npm ci
 ```
 
+To upgrade, run `git fetch --tags`, check out the newest tag the same way, then run `npm ci` and `npx wrangler deploy`. [`CHANGELOG.md`](CHANGELOG.md) lists each release's changes.
+
 ## Usage
 
-1. Write the config: your apps, targets and routes. Start from [`config.example.yaml`](config.example.yaml) and remove the sources you don't use: every `${VAR}` must be set and every key file must exist.
-2. Put the variables the config references in `.env`, then start the server.
-
-   With Docker Compose 2.23.1 or later, the config can live in `compose.yml`:
-
-   ```yaml
-   services:
-     storeherald:
-       image: ghcr.io/rasmuskard/storeherald
-       ports: ["8080:8080"]
-       env_file: .env
-       configs:
-         - source: storeherald
-           target: /config/config.yaml
-
-   configs:
-     storeherald:
-       content: |
-         apps:
-           myapp:
-             name: My App
-             eas: { secret: "$${EAS_WEBHOOK_SECRET}" }
-         targets:
-           - { id: releases, type: slack, url: "$${SLACK_RELEASES_WEBHOOK}" }
-         routes:
-           - { types: ["*"], targets: [releases] }
-   ```
-
-   Compose replaces `${VAR}` in `content` itself, so write `$${VAR}` there. The server then reads the value from its environment, and `compose.yml` holds no secrets. Key files can be more `configs`, or the key itself can go in a variable.
-
-   Or with `docker run`, mounting the folder that holds `config.yaml` and its key files at `/config`:
+1. Write the config: your apps, targets and routes. Start from [`config.example.yaml`](config.example.yaml) and remove the sources you don't use: every `${VAR}` must be set. Put each key inline in its own variable, since Workers [limits the size of each one](https://developers.cloudflare.com/workers/platform/limits/).
+2. Set the config and every variable it references as secrets:
 
    ```sh
-   docker run --env-file .env -p 8080:8080 -v "$PWD:/config:ro" ghcr.io/rasmuskard/storeherald
+   npx wrangler secret put STOREHERALD_CONFIG < config.yaml
+   npx wrangler secret put EAS_WEBHOOK_SECRET
    ```
 
-   Or from source:
+3. If you don't use Google Play, remove `triggers` and `kv_namespaces` from [`wrangler.jsonc`](wrangler.jsonc). Otherwise set its cron schedule to how often to poll, at most every 2 minutes: a faster schedule can post a change twice.
+4. Deploy with `npx wrangler deploy`. It prints the Worker's URL.
+5. [Connect the sources](#sources).
+6. Logs are JSON lines in the Worker's logs. Alert on those with `"level":"error"` and point your uptime check at `GET /health_check`, which fails when the config does.
 
-   ```sh
-   node --env-file=.env src/main.ts config.yaml
-   ```
+To run it locally, put the variables in `.dev.vars` and run `npx wrangler dev`. Wrangler expands `${VAR}` in `.dev.vars` itself, so write `\${VAR}` there.
 
-   On a host that can't mount a file, put the YAML in the `STOREHERALD_CONFIG` environment variable instead.
-
-3. [Connect the sources](#sources).
-4. Logs are JSON lines on stdout. Alert on those with `"level":"error"` and point your uptime check at `GET /health_check`.
+To host it yourself, run it on [celld](https://github.com/denoland/celld). celld refuses the `observability` key and needs an `id` on the KV namespace, so remove the one and add the other in `wrangler.jsonc`. It doesn't expand `${VAR}` in `.dev.vars`, so write it there unescaped.
 
 ## Sources
 
@@ -107,7 +78,7 @@ Add [`ascApi`](https://rasmuskard.github.io/storeherald/interfaces/ConfigAscApi.
 
 ### Google Play
 
-The server polls Play every [`playApi.intervalMinutes`](https://rasmuskard.github.io/storeherald/interfaces/ConfigPlayApi.html). The first poll only records the current state. Messages start with the next change.
+The Worker polls Play on the cron schedule in [`wrangler.jsonc`](wrangler.jsonc) and keeps the release states it has seen in the `STATE` KV namespace, which `wrangler deploy` creates. The first poll only records the current state. Messages start with the next change.
 
 - In a Google Cloud project, enable the *Google Play Android Developer API*.
 - Create a service account in that project and download its JSON key.
@@ -146,32 +117,8 @@ if (!res.ok) throw new Error(`ingest: ${res.status} ${await res.text()}`);
 
 [`slack`](https://rasmuskard.github.io/storeherald/interfaces/SlackTarget.html), [`discord`](https://rasmuskard.github.io/storeherald/interfaces/DiscordTarget.html) and [`teams`](https://rasmuskard.github.io/storeherald/interfaces/TeamsTarget.html), each with its options and where its webhook URL comes from.
 
-## State
-
-The server keeps Google Play's seen release states in memory, so it needs no disk or volume. To keep them across restarts, point [`stateStore`](https://rasmuskard.github.io/storeherald/interfaces/ConfigFile.html#statestore) in the config at a module like this one.
-
-<details>
-<summary>A file on disk</summary>
-
-```js
-// state-store.mjs: a file on disk. In Docker, set STATE_DIR to a mounted volume (the app folder isn't writable).
-import { readFile, rename, writeFile } from 'node:fs/promises';
-const file = (key) => `${process.env.STATE_DIR ?? '.'}/${key}.json`;
-export const get = (key) => readFile(file(key), 'utf8').catch((e) => (e.code === 'ENOENT' ? undefined : Promise.reject(e)));
-export const set = async (key, value) => {
-  await writeFile(`${file(key)}.tmp`, value);
-  await rename(`${file(key)}.tmp`, file(key)); // atomic: a crash mid-write can't leave a half-written file
-};
-```
-
-</details>
-
-To use Redis, a database or another remote store instead, export the same `get` and `set` backed by it.
-
 ## Limits
 
-- Google Play changes made while the server is down are missed unless you configure a [state store](#state).
-- If you use Google Play, run a single instance. Each instance polls, so two would post every change twice.
 - Google Play rejection reasons aren't in its API. They arrive by email.
 - If every target was down when an App Store Connect event arrived, resend it by hand from the webhook's delivery list in App Store Connect.
 

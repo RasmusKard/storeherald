@@ -1,6 +1,6 @@
 name: Pages
 
-# Publishes the TypeDoc site from a release tag, so the docs describe the image people run, not unreleased main.
+# Publishes the TypeDoc site from a release tag, so the docs describe the version people deploy, not unreleased main.
 # Run it by hand to republish, e.g. to put docs fixes for the current release live before the next one.
 on:
   workflow_call:

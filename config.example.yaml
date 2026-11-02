@@ -1,6 +1,4 @@
-# Copy to config.yaml. Every key is documented at https://rasmuskard.github.io/storeherald/interfaces/ConfigFile.html
-port: 8080
-# stateStore: ./state-store.mjs
+# The STOREHERALD_CONFIG variable's value. Every key is documented at https://rasmuskard.github.io/storeherald/interfaces/ConfigFile.html
 
 apps:
   myapp:
@@ -16,11 +14,10 @@ apps:
 ascApi:
   issuerId: "${ASC_ISSUER_ID}"
   keyId: "${ASC_KEY_ID}"
-  privateKey: ./secrets/AuthKey.p8
+  privateKey: "${ASC_PRIVATE_KEY}"
 
 playApi:
-  serviceAccount: ./secrets/play-service-account.json
-  intervalMinutes: 15
+  serviceAccount: "${PLAY_SERVICE_ACCOUNT}"
 
 ingest:
   secret: "${INGEST_SECRET}"
