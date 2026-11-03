@@ -71,6 +71,14 @@ export interface ConfigPlay {
    * event, on any other track a `testing.build.available` event.
    */
   tracks: string[];
+  /**
+   * Also posts Android vitals alerts: `vitals.anomaly` when Google flags a vitals rate, such as the crash or ANR rate, as
+   * unexpectedly high, and `vitals.issue` for a crash or ANR issue the Worker hasn't seen before. The first poll only
+   * records the current ones. Needs the *Google Play Developer Reporting API* enabled in the service account's Google
+   * Cloud project.
+   * @default `false`
+   */
+  vitals?: boolean;
 }
 
 /** An App Store Connect API team key, from App Store Connect › Users and Access › Integrations › Team keys. The Developer role is enough. */
@@ -122,6 +130,7 @@ export interface ConfigRoute {
    * | `appreview.rejected` | `error` | App Store Connect, Google Play |
    * | `appreview.withdrawn` | `info` | App Store Connect |
    * | `release.live` | `success` | App Store Connect, Google Play |
+   * | `vitals.anomaly`, `vitals.issue` | `warning` | Google Play ({@link ConfigPlay.vitals}) |
    *
    * EAS sends no event when a build or submission starts.
    */
@@ -237,13 +246,13 @@ function parseApps(v: unknown): Map<string, AppConfig> {
     const a = obj(raw, w, keysOf<ConfigApp>({ name: true, eas: true, asc: true, play: true }));
     const eas = a.eas == null ? undefined : obj(a.eas, `${w}.eas`, keysOf<ConfigWebhook>({ secret: true }));
     const asc = a.asc == null ? undefined : obj(a.asc, `${w}.asc`, keysOf<ConfigWebhook>({ secret: true }));
-    const play = a.play == null ? undefined : obj(a.play, `${w}.play`, keysOf<ConfigPlay>({ packageName: true, tracks: true }));
+    const play = a.play == null ? undefined : obj(a.play, `${w}.play`, keysOf<ConfigPlay>({ packageName: true, tracks: true, vitals: true }));
     apps.set(id, {
       id,
       name: str(a, 'name', w),
       eas: eas && { secret: str(eas, 'secret', `${w}.eas`) },
       asc: asc && { secret: str(asc, 'secret', `${w}.asc`) },
-      play: play && { packageName: str(play, 'packageName', `${w}.play`), tracks: strList(play, 'tracks', `${w}.play`) },
+      play: play && { packageName: str(play, 'packageName', `${w}.play`), tracks: strList(play, 'tracks', `${w}.play`), vitals: bool(play, 'vitals', `${w}.play`, DEFAULTS.ConfigPlay.vitals) },
     });
   }
   return apps;

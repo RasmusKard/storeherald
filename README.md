@@ -78,11 +78,12 @@ Add [`ascApi`](https://rasmuskard.github.io/storeherald/interfaces/ConfigAscApi.
 
 ### Google Play
 
-The Worker polls Play on the cron schedule in [`wrangler.jsonc`](wrangler.jsonc) and keeps the release states it has seen in the `STATE` KV namespace, which `wrangler deploy` creates. The first poll only records the current state. Messages start with the next change.
+The Worker polls Play on the cron schedule in [`wrangler.jsonc`](wrangler.jsonc) and keeps what it has seen in the `STATE` KV namespace, which `wrangler deploy` creates. The first poll only records the current state. Messages start with the next change.
 
 - In a Google Cloud project, enable the *Google Play Android Developer API*.
 - Create a service account in that project and download its JSON key.
 - Invite it in Play Console › Users and permissions with read-only access to the app.
+- For [`vitals`](https://rasmuskard.github.io/storeherald/interfaces/ConfigPlay.html#vitals) alerts, also enable the *Google Play Developer Reporting API* in that project.
 
 ### Custom events
 
