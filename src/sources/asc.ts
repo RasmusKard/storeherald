@@ -222,14 +222,68 @@ export function ascReviewsDiff(prev: number | undefined, reviews: CustomerReview
   return { next, messages };
 }
 
-/** One poll of the App Store Connect API for every app that asks for it. */
+export interface LiveVersions {
+  data: { id: string; attributes: { versionString: string; platform: string }; relationships?: { appStoreVersionPhasedRelease?: { data?: { id: string } | null } } }[];
+  included?: { type: string; id: string; attributes: { phasedReleaseState: string; currentDayNumber?: number } }[];
+}
+/** appStoreVersion id -> `${phasedReleaseState}:${currentDayNumber}` */
+export type PhasedState = Record<string, string>;
+
+const PHASED_PERCENT = [1, 2, 5, 10, 20, 50, 100]; // by day: Apple's fixed schedule
+
+function phasedEvent(state: string, day: number): StateEvent | undefined {
+  const pct = `${PHASED_PERCENT[Math.min(day, 7) - 1] ?? 0}%`;
+  if (state === 'ACTIVE') return { type: 'rollout.updated', severity: 'info', what: `phased release at ${pct} (day ${day} of 7)` };
+  if (state === 'PAUSED') return { type: 'rollout.paused', severity: 'warning', what: `phased release paused at ${pct}` };
+  if (state === 'COMPLETE') return { type: 'rollout.completed', severity: 'success', what: 'phased release complete' };
+  return undefined;
+}
+
+/** Phased release changes of the live versions. `prev === undefined` (first poll) records a baseline and notifies nothing. */
+export function phasedDiff(prev: PhasedState | undefined, r: LiveVersions, app: AppConfig) {
+  const next: PhasedState = {};
+  const messages: Message[] = [];
+  for (const v of r.data) {
+    const pid = v.relationships?.appStoreVersionPhasedRelease?.data?.id;
+    const p = r.included?.find((x) => x.type === 'appStoreVersionPhasedReleases' && x.id === pid)?.attributes;
+    if (!p) continue; // released to everyone at once
+    const day = p.currentDayNumber ?? 0;
+    const state = `${p.phasedReleaseState}:${day}`;
+    next[v.id] = state;
+    if (!prev || prev[v.id] === state) continue;
+
+    const ev = phasedEvent(p.phasedReleaseState, day);
+    if (!ev) continue;
+    const platform = platformName(v.attributes.platform);
+    messages.push({
+      id: `asc:${v.id}:${state}`,
+      type: ev.type,
+      source: 'App Store Connect',
+      severity: ev.severity,
+      title: `${platform} ${ev.what}: ${app.name} ${v.attributes.versionString}`,
+      links: [{ label: 'Open in App Store Connect', url: `https://appstoreconnect.apple.com/apps/${app.asc!.appId}/distribution` }],
+      labels: { app: app.id, platform: platform.toLowerCase() },
+    });
+  }
+  return { next, messages };
+}
+
+/** One poll of the App Store Connect API for every app with ConfigAsc.appId. */
 export async function pollAsc(cfg: Pick<Config, 'ascApi' | 'apps'>, router: Router, store: StateStore | undefined) {
   const api = cfg.ascApi;
-  const apps = [...cfg.apps.values()].filter((a) => a.asc?.reviews);
+  const apps = [...cfg.apps.values()].filter((a) => a.asc?.appId);
   if (!api || !apps.length) return;
   if (!store) return log('error', 'no STATE KV binding: App Store Connect is not polled');
 
-  await pollEach<number>(store, 'asc-reviews', router, apps.map((app) => ({
+  await pollEach<PhasedState>(store, 'asc-phased', router, apps.map((app) => ({
+    id: app.asc!.appId!,
+    poll: async (prev) => {
+      const path = `/v1/apps/${encodeURIComponent(app.asc!.appId!)}/appStoreVersions?filter[appVersionState]=READY_FOR_DISTRIBUTION&include=appStoreVersionPhasedRelease`
+        + '&fields[appStoreVersions]=versionString,platform,appStoreVersionPhasedRelease&fields[appStoreVersionPhasedReleases]=phasedReleaseState,currentDayNumber';
+      return phasedDiff(prev, (await ascFetch(api, path, 15_000)) as LiveVersions, app);
+    },
+  })));
+  await pollEach<number>(store, 'asc-reviews', router, apps.filter((a) => a.asc!.reviews).map((app) => ({
     id: app.asc!.appId!,
     poll: async (prev) => {
       const path = `/v1/apps/${encodeURIComponent(app.asc!.appId!)}/customerReviews?sort=-createdDate&limit=100&fields[customerReviews]=rating,title,body,reviewerNickname,territory,createdDate`;

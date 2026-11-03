@@ -65,8 +65,10 @@ export interface ConfigWebhook {
 /** The App Store Connect source of a {@link ConfigApp}. */
 export interface ConfigAsc extends ConfigWebhook {
   /**
-   * The app's Apple ID, the number in its App Store Connect URL. Needed by the options below, which poll the App Store
-   * Connect API with {@link ConfigFile.ascApi} on the Worker's cron schedule, in `wrangler.jsonc`.
+   * The app's Apple ID, the number in its App Store Connect URL. With it, the Worker polls the App Store Connect API
+   * with {@link ConfigFile.ascApi} on its cron schedule, in `wrangler.jsonc`, and posts phased release changes:
+   * `rollout.updated` for each day's new percentage or a resume, `rollout.paused` and `rollout.completed`. The first poll
+   * only records the current state.
    */
   appId?: string;
   /**
@@ -152,6 +154,9 @@ export interface ConfigRoute {
    * | `appreview.withdrawn` | `info` | App Store Connect |
    * | `release.live` | `success` | App Store Connect, Google Play |
    * | `vitals.anomaly`, `vitals.issue` | `warning` | Google Play ({@link ConfigPlay.vitals}) |
+   * | `rollout.updated` | `info` | App Store Connect ({@link ConfigAsc.appId}) |
+   * | `rollout.paused` | `warning` | App Store Connect ({@link ConfigAsc.appId}) |
+   * | `rollout.completed` | `success` | App Store Connect ({@link ConfigAsc.appId}) |
    * | `userreview.posted` | `warning` for 1 or 2 stars, `info` for 3, `success` for 4 or 5 | App Store Connect ({@link ConfigAsc.reviews}), Google Play ({@link ConfigPlay.reviews}) |
    *
    * EAS sends no event when a build or submission starts.
@@ -367,7 +372,10 @@ export function parseConfig(raw: unknown): Config {
   const unpolled = [...apps.values()].find((a) => a.play && !playApi);
   if (unpolled) throw new Error(`config: apps.${unpolled.id}.play needs playApi`);
   const ascApi = root.ascApi == null ? undefined : parseAscApi(root.ascApi);
-  for (const a of apps.values()) if (a.asc?.reviews && !(a.asc.appId && ascApi)) throw new Error(`config: apps.${a.id}.asc.reviews needs asc.appId and ascApi`);
+  for (const a of apps.values()) {
+    if (a.asc?.reviews && !a.asc.appId) throw new Error(`config: apps.${a.id}.asc.reviews needs asc.appId`);
+    if (a.asc?.appId && !ascApi) throw new Error(`config: apps.${a.id}.asc.appId needs ascApi`);
+  }
   return {
     apps,
     ascApi,

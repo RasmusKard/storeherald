@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { generateKeyPairSync } from 'node:crypto';
 import { test } from 'node:test';
 import type { AppConfig } from '../src/config.ts';
-import { ascMessages, ascReviewsDiff, ascToMessages, verifyAsc } from '../src/sources/asc.ts';
+import { ascMessages, ascReviewsDiff, ascToMessages, phasedDiff, verifyAsc } from '../src/sources/asc.ts';
 import { easToMessages } from '../src/sources/eas.ts';
 import { ingestToMessage, verifyIngest } from '../src/sources/ingest.ts';
 import { playDiff, playReviewsDiff } from '../src/sources/play.ts';
@@ -100,6 +100,19 @@ void test('reviews: the first poll is a baseline, then newer reviews notify with
   const base = playReviewsDiff(undefined, p('100'), play);
   assert.equal(playReviewsDiff(base.next, p('100'), play).messages.length, 0);
   assert.deepEqual(playReviewsDiff(base.next, p('200'), play).messages.map((m) => [m.title, m.severity, m.body]), [['★★★★☆ Google Play review: My App', 'success', 'Great\nLove it']]);
+});
+
+void test('rollouts: phased release changes after a baseline', () => {
+  const asc = { ...app, asc: { secret: 's', appId: '123' } };
+  const live = (phasedReleaseState: string, currentDayNumber: number) => ({
+    data: [{ id: 'v1', attributes: { versionString: '1.4.2', platform: 'IOS' }, relationships: { appStoreVersionPhasedRelease: { data: { id: 'p1' } } } }],
+    included: [{ type: 'appStoreVersionPhasedReleases', id: 'p1', attributes: { phasedReleaseState, currentDayNumber } }],
+  });
+  const ios = phasedDiff(undefined, live('ACTIVE', 2), asc);
+  assert.equal(ios.messages.length, 0);
+  assert.deepEqual(phasedDiff(ios.next, live('ACTIVE', 3), asc).messages.map((m) => [m.type, m.title]), [['rollout.updated', 'iOS phased release at 5% (day 3 of 7): My App 1.4.2']]);
+  assert.deepEqual(phasedDiff(ios.next, live('PAUSED', 2), asc).messages.map((m) => m.type), ['rollout.paused']);
+
 });
 
 void test('ingest: a valid event becomes a message, a javascript: link is rejected', () => {
