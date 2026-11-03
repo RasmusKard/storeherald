@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { generateKeyPairSync } from 'node:crypto';
 import { test } from 'node:test';
 import type { AppConfig } from '../src/config.ts';
-import { ascMessages, ascReviewsDiff, ascToMessages, phasedDiff, verifyAsc } from '../src/sources/asc.ts';
+import { ascMessages, ascReviewsDiff, ascToMessages, phasedDiff, unresolvedDiff, verifyAsc } from '../src/sources/asc.ts';
 import { easToMessages } from '../src/sources/eas.ts';
 import { ingestToMessage, verifyIngest } from '../src/sources/ingest.ts';
 import { playDiff, playReviewsDiff } from '../src/sources/play.ts';
@@ -113,6 +113,15 @@ void test('rollouts: phased release changes after a baseline', () => {
   assert.deepEqual(phasedDiff(ios.next, live('ACTIVE', 3), asc).messages.map((m) => [m.type, m.title]), [['rollout.updated', 'iOS phased release at 5% (day 3 of 7): My App 1.4.2']]);
   assert.deepEqual(phasedDiff(ios.next, live('PAUSED', 2), asc).messages.map((m) => m.type), ['rollout.paused']);
 
+});
+
+void test('ASC: a new unresolved submission notifies, unless its version was rejected', () => {
+  const asc = { ...app, asc: { secret: 's', appId: '123' } };
+  const sub = (id: string, versionId?: string) => ({ id, attributes: { platform: 'IOS' }, relationships: { appStoreVersionForReview: { data: versionId ? { id: versionId } : null } } });
+  const base = unresolvedDiff(undefined, { data: [sub('s1')] }, asc);
+  assert.equal(base.messages.length, 0);
+  const r = { data: [sub('s1'), sub('s2'), sub('s3', 'v3')], included: [{ type: 'appStoreVersions', id: 'v3', attributes: { versionString: '1.5.0', appVersionState: 'REJECTED' } }] };
+  assert.deepEqual(unresolvedDiff(base.next, r, asc).messages.map((m) => [m.type, m.id]), [['appreview.unresolved', 'asc:submission:s2']]);
 });
 
 void test('ingest: a valid event becomes a message, a javascript: link is rejected', () => {

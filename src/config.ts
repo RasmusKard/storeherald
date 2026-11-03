@@ -67,8 +67,9 @@ export interface ConfigAsc extends ConfigWebhook {
   /**
    * The app's Apple ID, the number in its App Store Connect URL. With it, the Worker polls the App Store Connect API
    * with {@link ConfigFile.ascApi} on its cron schedule, in `wrangler.jsonc`, and posts phased release changes:
-   * `rollout.updated` for each day's new percentage or a resume, `rollout.paused` and `rollout.completed`. The first poll
-   * only records the current state.
+   * `rollout.updated` for each day's new percentage or a resume, `rollout.paused` and `rollout.completed`. It also posts
+   * `appreview.unresolved` when App Review sends back a submission whose version wasn't rejected, such as one for an
+   * in-app purchase or event. The first poll only records the current state.
    */
   appId?: string;
   /**
@@ -152,6 +153,7 @@ export interface ConfigRoute {
    * | `appreview.approved` | `success` | App Store Connect, Google Play |
    * | `appreview.rejected` | `error` | App Store Connect, Google Play |
    * | `appreview.withdrawn` | `info` | App Store Connect |
+   * | `appreview.unresolved` | `error` | App Store Connect ({@link ConfigAsc.appId}) |
    * | `release.live` | `success` | App Store Connect, Google Play |
    * | `vitals.anomaly`, `vitals.issue` | `warning` | Google Play ({@link ConfigPlay.vitals}) |
    * | `rollout.updated` | `info` | App Store Connect ({@link ConfigAsc.appId}) |

@@ -268,6 +268,37 @@ export function phasedDiff(prev: PhasedState | undefined, r: LiveVersions, app: 
   return { next, messages };
 }
 
+export interface UnresolvedSubmissions {
+  data: { id: string; attributes: { platform?: string }; relationships?: { appStoreVersionForReview?: { data?: { id: string } | null } } }[];
+  included?: { type: string; id: string; attributes: { versionString?: string; appVersionState?: string } }[];
+}
+
+/**
+ * Submissions App Review sent back, such as for an in-app purchase or event, that no version webhook reports: those
+ * whose version was rejected are skipped. `prev === undefined` (first poll) records a baseline and notifies nothing.
+ */
+export function unresolvedDiff(prev: string[] | undefined, r: UnresolvedSubmissions, app: AppConfig) {
+  const next = r.data.map((s) => s.id);
+  if (!prev) return { next, messages: [] };
+  const messages = r.data.filter((s) => !prev.includes(s.id)).flatMap((s): Message[] => {
+    const vid = s.relationships?.appStoreVersionForReview?.data?.id;
+    const v = r.included?.find((x) => x.type === 'appStoreVersions' && x.id === vid)?.attributes;
+    if (v?.appVersionState && REJECTED.includes(v.appVersionState)) return [];
+    const platform = platformName(s.attributes.platform ?? 'IOS');
+    return [{
+      id: `asc:submission:${s.id}`,
+      type: 'appreview.unresolved',
+      source: 'App Store Connect',
+      severity: 'error',
+      title: `${platform} App Review found unresolved issues: ${app.name}${v?.versionString ? ` ${v.versionString}` : ''}`,
+      body: 'Apple does not expose the reason via the API: see the App Review message in App Store Connect.',
+      links: [{ label: 'Open in App Store Connect', url: `https://appstoreconnect.apple.com/apps/${app.asc!.appId}/distribution` }],
+      labels: { app: app.id, platform: platform.toLowerCase() },
+    }];
+  });
+  return { next, messages };
+}
+
 /** One poll of the App Store Connect API for every app with ConfigAsc.appId. */
 export async function pollAsc(cfg: Pick<Config, 'ascApi' | 'apps'>, router: Router, store: StateStore | undefined) {
   const api = cfg.ascApi;
@@ -281,6 +312,14 @@ export async function pollAsc(cfg: Pick<Config, 'ascApi' | 'apps'>, router: Rout
       const path = `/v1/apps/${encodeURIComponent(app.asc!.appId!)}/appStoreVersions?filter[appVersionState]=READY_FOR_DISTRIBUTION&include=appStoreVersionPhasedRelease`
         + '&fields[appStoreVersions]=versionString,platform,appStoreVersionPhasedRelease&fields[appStoreVersionPhasedReleases]=phasedReleaseState,currentDayNumber';
       return phasedDiff(prev, (await ascFetch(api, path, 15_000)) as LiveVersions, app);
+    },
+  })));
+  await pollEach<string[]>(store, 'asc-submissions', router, apps.map((app) => ({
+    id: app.asc!.appId!,
+    poll: async (prev) => {
+      const path = `/v1/apps/${encodeURIComponent(app.asc!.appId!)}/reviewSubmissions?filter[state]=UNRESOLVED_ISSUES&include=appStoreVersionForReview`
+        + '&fields[reviewSubmissions]=platform,appStoreVersionForReview&fields[appStoreVersions]=versionString,appVersionState';
+      return unresolvedDiff(prev, (await ascFetch(api, path, 15_000)) as UnresolvedSubmissions, app);
     },
   })));
   await pollEach<number>(store, 'asc-reviews', router, apps.filter((a) => a.asc!.reviews).map((app) => ({

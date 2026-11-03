@@ -76,7 +76,7 @@ eas webhook:create --event SUBMIT --url https://your.host/eas/myapp --secret "$E
 
 Add [`ascApi`](https://rasmuskard.github.io/storeherald/interfaces/ConfigAscApi.html) to the config to get version numbers in messages.
 
-Phased releases and App Store reviews have no webhook. With [`asc.appId`](https://rasmuskard.github.io/storeherald/interfaces/ConfigAsc.html) set, the Worker polls them on the cron schedule in [`wrangler.jsonc`](wrangler.jsonc), keeping what it has seen in the `STATE` KV namespace.
+Phased releases, App Store reviews and App Review results for in-app purchases and events have no webhook. With [`asc.appId`](https://rasmuskard.github.io/storeherald/interfaces/ConfigAsc.html) set, the Worker polls them on the cron schedule in [`wrangler.jsonc`](wrangler.jsonc), keeping what it has seen in the `STATE` KV namespace.
 
 ### Google Play
 
