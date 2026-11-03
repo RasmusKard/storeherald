@@ -111,6 +111,9 @@ export interface ConfigRoute {
    * | `build.canceled`, `submit.canceled` | `info` | EAS |
    * | `build.processing_failed` | `error` | App Store Connect |
    * | `testing.build.available` | `success` | App Store Connect, Google Play |
+   * | `betareview.submitted`, `betareview.in_review` | `info` | App Store Connect (TestFlight external testing) |
+   * | `betareview.approved` | `success` | App Store Connect (TestFlight external testing) |
+   * | `betareview.rejected` | `error` | App Store Connect (TestFlight external testing) |
    * | `appreview.submitted` | `info` | App Store Connect |
    * | `appreview.in_review` | `info` | App Store Connect, Google Play |
    * | `appreview.approved` | `success` | App Store Connect, Google Play |

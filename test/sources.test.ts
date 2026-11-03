@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
+import { generateKeyPairSync } from 'node:crypto';
 import { test } from 'node:test';
 import type { AppConfig } from '../src/config.ts';
-import { ascToMessages, verifyAsc } from '../src/sources/asc.ts';
+import { ascMessages, ascToMessages, verifyAsc } from '../src/sources/asc.ts';
 import { easToMessages } from '../src/sources/eas.ts';
 import { ingestToMessage, verifyIngest } from '../src/sources/ingest.ts';
 import { playDiff } from '../src/sources/play.ts';
@@ -48,6 +49,22 @@ void test('ASC: version state changes map to review and release events', () => {
   assert.deepEqual(types('PENDING_DEVELOPER_RELEASE', 'READY_FOR_DISTRIBUTION'), ['release.live']);
   assert.deepEqual(types('WAITING_FOR_REVIEW', 'DEVELOPER_REJECTED'), ['appreview.withdrawn']);
   assert.deepEqual(types('PREPARE_FOR_SUBMISSION', 'READY_FOR_REVIEW'), []);
+});
+
+void test("ASC: Apple's external TestFlight example maps to a beta review approval, with the build looked up", async (t) => {
+  const event = {
+    data: {
+      type: 'buildBetaDetailExternalBuildStateUpdated', id: '4a9eacca',
+      attributes: { newExternalBuildState: 'BETA_APPROVED', oldExternalBuildState: 'IN_BETA_REVIEW', timestamp: '2025-04-16T05:00:52.745Z' },
+      relationships: { instance: { data: { type: 'buildBetaDetails', id: 'ad7e6298' } } },
+    },
+  };
+  t.mock.method(globalThis, 'fetch', async (url: string) =>
+    Response.json(url.includes('/buildBetaDetails/ad7e6298/relationships/build') ? { data: { type: 'builds', id: 'b57' } }
+      : { data: { attributes: { version: '57' }, relationships: { app: { data: { id: '123' } } } }, included: [{ type: 'preReleaseVersions', attributes: { version: '1.4.2', platform: 'IOS' } }] }));
+  const api = { issuerId: 'i', keyId: 'k', privateKey: generateKeyPairSync('ec', { namedCurve: 'P-256' }).privateKey.export({ type: 'pkcs8', format: 'pem' }) as string };
+  const [m] = await ascMessages(event, app, api);
+  assert.deepEqual([m.type, m.title, m.links?.[0].url], ['betareview.approved', 'iOS build approved in TestFlight review: My App 1.4.2 (57)', 'https://appstoreconnect.apple.com/apps/123/testflight']);
 });
 
 void test('Play: first poll is a baseline, then a state change notifies', () => {

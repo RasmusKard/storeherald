@@ -9,7 +9,7 @@ export interface AscEvent {
   data: {
     type: string;
     id: string;
-    attributes?: null | { oldValue?: string; newValue?: string; newState?: string; timestamp?: string };
+    attributes?: null | { oldValue?: string; newValue?: string; newState?: string; newExternalBuildState?: string; timestamp?: string };
     relationships?: { instance?: { data?: { type: string; id: string } } };
   };
 }
@@ -39,6 +39,14 @@ function versionEvents(oldValue: string | undefined, newValue: string): StateEve
   return out;
 }
 
+const BETA_REVIEW: Record<string, StateEvent> = {
+  WAITING_FOR_BETA_REVIEW: { type: 'betareview.submitted', severity: 'info', what: 'submitted for TestFlight review' },
+  IN_BETA_REVIEW: { type: 'betareview.in_review', severity: 'info', what: 'in TestFlight review' },
+  BETA_REJECTED: { type: 'betareview.rejected', severity: 'error', what: 'rejected in TestFlight review' },
+  BETA_APPROVED: { type: 'betareview.approved', severity: 'success', what: 'approved in TestFlight review' },
+  IN_BETA_TESTING: { type: 'testing.build.available', severity: 'success', what: 'available to external testers in TestFlight' },
+};
+
 export function ascToMessages(e: AscEvent, app: AppConfig, d: AscDetails = {}): Message[] {
   const { type, id } = e.data;
   const a = e.data.attributes ?? {}; // the undocumented test ping may have none, or null
@@ -67,6 +75,18 @@ export function ascToMessages(e: AscEvent, app: AppConfig, d: AscDetails = {}): 
       severity: ok ? 'success' : 'error',
       title: ok ? `${platform} build processed, available in TestFlight: ${name}` : `${platform} build failed App Store Connect processing: ${name}`,
       links: [{ label: 'Open TestFlight', url: 'https://appstoreconnect.apple.com/apps' }], // buildUploads have no app id to deep-link
+    }];
+  }
+  const beta = type === 'buildBetaDetailExternalBuildStateUpdated' && a.newExternalBuildState ? BETA_REVIEW[a.newExternalBuildState] : undefined;
+  if (beta) {
+    return [{
+      ...base,
+      id: `asc:${id}`,
+      type: beta.type,
+      severity: beta.severity,
+      title: `${platform} build ${beta.what}: ${name}`,
+      body: beta.type === 'betareview.rejected' ? 'Apple does not expose the reason via the API: see TestFlight in App Store Connect.' : undefined,
+      links: [{ label: 'Open TestFlight', url: appUrl ? `${appUrl}/testflight` : 'https://appstoreconnect.apple.com/apps' }],
     }];
   }
   return [];
@@ -102,6 +122,20 @@ const ascFetch = (api: AscApi, path: string) =>
   fetchJson(`ASC API ${path.split('?')[0]}`, `https://api.appstoreconnect.apple.com${path}`,
     { headers: { authorization: `Bearer ${jwt(api)}`, 'content-type': 'application/json' } }, 3000); // short: the webhook reply waits on it
 
+// The fields of the JSON:API responses read below.
+type Linkage = { data: { id: string } };
+interface BuildResponse {
+  data: { attributes: { version: string }; relationships?: { app?: Linkage } };
+  included?: { type: string; attributes: { version?: string; platform?: string } }[];
+}
+
+async function buildDetails(api: AscApi, buildId: string): Promise<AscDetails> {
+  const r = (await ascFetch(api, `/v1/builds/${encodeURIComponent(buildId)}?include=preReleaseVersion,app&fields[builds]=version,preReleaseVersion,app&fields[preReleaseVersions]=version,platform&fields[apps]=bundleId`)) as BuildResponse;
+  const pre = r.included?.find((x) => x.type === 'preReleaseVersions')?.attributes;
+  const build = r.data.attributes.version;
+  return { version: pre ? `${pre.version} (${build})` : build, platform: pre?.platform, appleAppId: r.data.relationships?.app?.data?.id };
+}
+
 async function ascDetails(e: AscEvent, api: AscApi | undefined): Promise<AscDetails> {
   const inst = e.data.relationships?.instance?.data;
   if (!api || !inst) return {};
@@ -113,6 +147,10 @@ async function ascDetails(e: AscEvent, api: AscApi | undefined): Promise<AscDeta
     if (inst.type === 'buildUploads') {
       const a = (await ascFetch(api, `/v1/buildUploads/${encodeURIComponent(inst.id)}`)).data.attributes;
       return { version: `${a.cfBundleShortVersionString} (${a.cfBundleVersion})`, platform: a.platform };
+    }
+    if (inst.type === 'buildBetaDetails') {
+      const r = (await ascFetch(api, `/v1/buildBetaDetails/${encodeURIComponent(inst.id)}/relationships/build`)) as Linkage;
+      return await buildDetails(api, r.data.id);
     }
   } catch (err) {
     log('warn', 'ASC details lookup failed, sending without them', { err: errText(err) });
