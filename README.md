@@ -72,7 +72,7 @@ eas webhook:create --event SUBMIT --url https://your.host/eas/myapp --secret "$E
 
 - URL: `https://your.host/asc/myapp`.
 - Secret: the one in `config.yaml`.
-- Events: *App Store version state changes*, *Build upload state changes* and, for TestFlight external testing, the external build state trigger.
+- Events: *App Store version state changes*, *Build upload state changes* and, for TestFlight, the external build state and beta feedback triggers.
 
 Add [`ascApi`](https://rasmuskard.github.io/storeherald/interfaces/ConfigAscApi.html) to the config to get version numbers in messages.
 

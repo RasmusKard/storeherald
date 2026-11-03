@@ -26,8 +26,8 @@ export interface ConfigFile {
    */
   apps: Record<string, ConfigApp>;
   /**
-   * Adds the version number and the platform to App Store Connect messages, and a link to the app to App Review and
-   * release messages. Without it, or when the lookup fails, the message is sent without them and says iOS, with the
+   * Adds the version number and the platform to App Store Connect messages, a link to the app to App Review, TestFlight
+   * and release messages, and the tester's comment, email, device and screenshots to TestFlight feedback. Without it, or when the lookup fails, the message is sent without them and says iOS, with the
    * `platform: ios` label, whatever the app's platform.
    */
   ascApi?: ConfigAscApi;
@@ -114,6 +114,8 @@ export interface ConfigRoute {
    * | `betareview.submitted`, `betareview.in_review` | `info` | App Store Connect (TestFlight external testing) |
    * | `betareview.approved` | `success` | App Store Connect (TestFlight external testing) |
    * | `betareview.rejected` | `error` | App Store Connect (TestFlight external testing) |
+   * | `testing.feedback` | `info` | App Store Connect (TestFlight feedback with a screenshot) |
+   * | `testing.crash` | `warning` | App Store Connect (TestFlight feedback on a crash) |
    * | `appreview.submitted` | `info` | App Store Connect |
    * | `appreview.in_review` | `info` | App Store Connect, Google Play |
    * | `appreview.approved` | `success` | App Store Connect, Google Play |

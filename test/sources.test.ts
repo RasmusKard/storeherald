@@ -67,6 +67,16 @@ void test("ASC: Apple's external TestFlight example maps to a beta review approv
   assert.deepEqual([m.type, m.title, m.links?.[0].url], ['betareview.approved', 'iOS build approved in TestFlight review: My App 1.4.2 (57)', 'https://appstoreconnect.apple.com/apps/123/testflight']);
 });
 
+void test('ASC: TestFlight feedback carries the comment, tester, device and screenshots', () => {
+  const event = { data: { type: 'betaFeedbackScreenshotSubmissionCreated', id: 'f1', relationships: { instance: { data: { type: 'betaFeedbackScreenshotSubmissions', id: 'AD8J' } } } } };
+  const feedback = { comment: 'Login button does nothing', email: 'kim@acme.com', device: 'iPhone15,2', os: '18.4', screenshots: ['https://x/1.png'] };
+  const [m] = ascToMessages(event, app, { version: '1.4.2 (57)', platform: 'IOS', appleAppId: '123', feedback });
+  assert.deepEqual([m.type, m.title, m.body, m.actor, m.links?.map((l) => l.label)],
+    ['testing.feedback', 'iOS TestFlight feedback: My App 1.4.2 (57)', 'Login button does nothing', 'kim@acme.com', ['Open TestFlight', 'Screenshot 1']]);
+  // Without ascApi it still notifies, so ascMessages doesn't drop it before the lookup.
+  assert.equal(ascToMessages({ data: { ...event.data, type: 'betaFeedbackCrashSubmissionCreated' } }, app)[0].type, 'testing.crash');
+});
+
 void test('Play: first poll is a baseline, then a state change notifies', () => {
   const rel = (state: string) => [{ releaseName: '57 (1.4.2)', releaseLifecycleState: `RELEASE_LIFECYCLE_STATE_${state}`, activeArtifacts: [{ versionCode: '57' }] }];
   const play = { ...app, play: { packageName: 'com.acme.myapp', tracks: ['production'] } };

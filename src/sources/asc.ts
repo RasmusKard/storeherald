@@ -18,6 +18,7 @@ export interface AscDetails {
   version?: string; // "1.4.2" or "1.4.2 (57)"
   platform?: string; // IOS, MAC_OS, ...
   appleAppId?: string;
+  feedback?: { comment?: string; email?: string; device?: string; os?: string; screenshots?: string[] };
 }
 
 export const verifyAsc = (raw: Buffer, header: string | undefined, secret: string) =>
@@ -45,6 +46,11 @@ const BETA_REVIEW: Record<string, StateEvent> = {
   BETA_REJECTED: { type: 'betareview.rejected', severity: 'error', what: 'rejected in TestFlight review' },
   BETA_APPROVED: { type: 'betareview.approved', severity: 'success', what: 'approved in TestFlight review' },
   IN_BETA_TESTING: { type: 'testing.build.available', severity: 'success', what: 'available to external testers in TestFlight' },
+};
+
+const FEEDBACK: Record<string, StateEvent> = {
+  betaFeedbackScreenshotSubmissionCreated: { type: 'testing.feedback', severity: 'info', what: 'TestFlight feedback' },
+  betaFeedbackCrashSubmissionCreated: { type: 'testing.crash', severity: 'warning', what: 'TestFlight crash report' },
 };
 
 export function ascToMessages(e: AscEvent, app: AppConfig, d: AscDetails = {}): Message[] {
@@ -89,6 +95,24 @@ export function ascToMessages(e: AscEvent, app: AppConfig, d: AscDetails = {}): 
       links: [{ label: 'Open TestFlight', url: appUrl ? `${appUrl}/testflight` : 'https://appstoreconnect.apple.com/apps' }],
     }];
   }
+  const fb = FEEDBACK[type];
+  if (fb) {
+    const f = d.feedback ?? {};
+    return [{
+      ...base,
+      id: `asc:${id}`,
+      type: fb.type,
+      severity: fb.severity,
+      title: `${platform} ${fb.what}: ${name}`,
+      body: f.comment || undefined,
+      actor: f.email,
+      fields: [{ label: 'Device', value: f.device ?? '' }, { label: 'OS', value: f.os ?? '' }],
+      links: [
+        { label: 'Open TestFlight', url: appUrl ? `${appUrl}/testflight` : 'https://appstoreconnect.apple.com/apps' },
+        ...(f.screenshots ?? []).map((url, i) => ({ label: `Screenshot ${i + 1}`, url })), // signed URLs that expire
+      ],
+    }];
+  }
   return [];
 }
 
@@ -128,6 +152,12 @@ interface BuildResponse {
   data: { attributes: { version: string }; relationships?: { app?: Linkage } };
   included?: { type: string; attributes: { version?: string; platform?: string } }[];
 }
+interface FeedbackResponse {
+  data: {
+    attributes: { comment?: string; email?: string; deviceModel?: string; osVersion?: string; screenshots?: { url: string }[] };
+    relationships: { build: Linkage };
+  };
+}
 
 async function buildDetails(api: AscApi, buildId: string): Promise<AscDetails> {
   const r = (await ascFetch(api, `/v1/builds/${encodeURIComponent(buildId)}?include=preReleaseVersion,app&fields[builds]=version,preReleaseVersion,app&fields[preReleaseVersions]=version,platform&fields[apps]=bundleId`)) as BuildResponse;
@@ -151,6 +181,12 @@ async function ascDetails(e: AscEvent, api: AscApi | undefined): Promise<AscDeta
     if (inst.type === 'buildBetaDetails') {
       const r = (await ascFetch(api, `/v1/buildBetaDetails/${encodeURIComponent(inst.id)}/relationships/build`)) as Linkage;
       return await buildDetails(api, r.data.id);
+    }
+    if (inst.type === 'betaFeedbackScreenshotSubmissions' || inst.type === 'betaFeedbackCrashSubmissions') {
+      const r = (await ascFetch(api, `/v1/${inst.type}/${encodeURIComponent(inst.id)}?include=build&fields[builds]=version`)) as FeedbackResponse;
+      const a = r.data.attributes;
+      const feedback = { comment: a.comment, email: a.email, device: a.deviceModel, os: a.osVersion, screenshots: a.screenshots?.map((x) => x.url) };
+      return { ...(await buildDetails(api, r.data.relationships.build.data.id)), feedback };
     }
   } catch (err) {
     log('warn', 'ASC details lookup failed, sending without them', { err: errText(err) });
