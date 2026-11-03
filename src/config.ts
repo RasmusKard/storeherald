@@ -48,7 +48,7 @@ export interface ConfigApp {
   /** Receives EAS build and submission webhooks at `/eas/<id>`. */
   eas?: ConfigWebhook;
   /** Receives App Store Connect webhooks at `/asc/<id>`. */
-  asc?: ConfigWebhook;
+  asc?: ConfigAsc;
   /** Polls Google Play, which has no release webhooks. Needs {@link ConfigFile.playApi}. */
   play?: ConfigPlay;
 }
@@ -60,6 +60,21 @@ export interface ConfigWebhook {
    * characters). For App Store Connect, the one set when creating the webhook.
    */
   secret: string;
+}
+
+/** The App Store Connect source of a {@link ConfigApp}. */
+export interface ConfigAsc extends ConfigWebhook {
+  /**
+   * The app's Apple ID, the number in its App Store Connect URL. Needed by the options below, which poll the App Store
+   * Connect API with {@link ConfigFile.ascApi} on the Worker's cron schedule, in `wrangler.jsonc`.
+   */
+  appId?: string;
+  /**
+   * Posts App Store reviews written since the last poll, as `userreview.posted`. The first poll only records the
+   * current ones.
+   * @default `false`
+   */
+  reviews?: boolean;
 }
 
 /** The Google Play source of a {@link ConfigApp}. */
@@ -79,6 +94,12 @@ export interface ConfigPlay {
    * @default `false`
    */
   vitals?: boolean;
+  /**
+   * Also posts reviews written or edited since the last poll, as `userreview.posted`. Google's API only returns reviews
+   * with text, on production. The service account needs the *Reply to reviews* permission in Play Console.
+   * @default `false`
+   */
+  reviews?: boolean;
 }
 
 /** An App Store Connect API team key, from App Store Connect › Users and Access › Integrations › Team keys. The Developer role is enough. */
@@ -131,6 +152,7 @@ export interface ConfigRoute {
    * | `appreview.withdrawn` | `info` | App Store Connect |
    * | `release.live` | `success` | App Store Connect, Google Play |
    * | `vitals.anomaly`, `vitals.issue` | `warning` | Google Play ({@link ConfigPlay.vitals}) |
+   * | `userreview.posted` | `warning` for 1 or 2 stars, `info` for 3, `success` for 4 or 5 | App Store Connect ({@link ConfigAsc.reviews}), Google Play ({@link ConfigPlay.reviews}) |
    *
    * EAS sends no event when a build or submission starts.
    */
@@ -245,14 +267,23 @@ function parseApps(v: unknown): Map<string, AppConfig> {
     if (!/^[a-z0-9-]+$/.test(id)) throw new Error(`config: app id "${id}" may only contain a-z, 0-9 and -`);
     const a = obj(raw, w, keysOf<ConfigApp>({ name: true, eas: true, asc: true, play: true }));
     const eas = a.eas == null ? undefined : obj(a.eas, `${w}.eas`, keysOf<ConfigWebhook>({ secret: true }));
-    const asc = a.asc == null ? undefined : obj(a.asc, `${w}.asc`, keysOf<ConfigWebhook>({ secret: true }));
-    const play = a.play == null ? undefined : obj(a.play, `${w}.play`, keysOf<ConfigPlay>({ packageName: true, tracks: true, vitals: true }));
+    const asc = a.asc == null ? undefined : obj(a.asc, `${w}.asc`, keysOf<ConfigAsc>({ secret: true, appId: true, reviews: true }));
+    const play = a.play == null ? undefined : obj(a.play, `${w}.play`, keysOf<ConfigPlay>({ packageName: true, tracks: true, vitals: true, reviews: true }));
     apps.set(id, {
       id,
       name: str(a, 'name', w),
       eas: eas && { secret: str(eas, 'secret', `${w}.eas`) },
-      asc: asc && { secret: str(asc, 'secret', `${w}.asc`) },
-      play: play && { packageName: str(play, 'packageName', `${w}.play`), tracks: strList(play, 'tracks', `${w}.play`), vitals: bool(play, 'vitals', `${w}.play`, DEFAULTS.ConfigPlay.vitals) },
+      asc: asc && {
+        secret: str(asc, 'secret', `${w}.asc`),
+        appId: asc.appId == null ? undefined : str(asc, 'appId', `${w}.asc`),
+        reviews: bool(asc, 'reviews', `${w}.asc`, DEFAULTS.ConfigAsc.reviews),
+      },
+      play: play && {
+        packageName: str(play, 'packageName', `${w}.play`),
+        tracks: strList(play, 'tracks', `${w}.play`),
+        vitals: bool(play, 'vitals', `${w}.play`, DEFAULTS.ConfigPlay.vitals),
+        reviews: bool(play, 'reviews', `${w}.play`, DEFAULTS.ConfigPlay.reviews),
+      },
     });
   }
   return apps;
@@ -335,9 +366,11 @@ export function parseConfig(raw: unknown): Config {
   const playApi = root.playApi == null ? undefined : parsePlayApi(root.playApi);
   const unpolled = [...apps.values()].find((a) => a.play && !playApi);
   if (unpolled) throw new Error(`config: apps.${unpolled.id}.play needs playApi`);
+  const ascApi = root.ascApi == null ? undefined : parseAscApi(root.ascApi);
+  for (const a of apps.values()) if (a.asc?.reviews && !(a.asc.appId && ascApi)) throw new Error(`config: apps.${a.id}.asc.reviews needs asc.appId and ascApi`);
   return {
     apps,
-    ascApi: root.ascApi == null ? undefined : parseAscApi(root.ascApi),
+    ascApi,
     playApi,
     ingest: root.ingest == null ? undefined : parseIngest(root.ingest),
     targets,

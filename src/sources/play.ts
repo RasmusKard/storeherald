@@ -4,7 +4,7 @@ import type { AppConfig, Config, PlayApi } from '../config.ts';
 import { log } from '../log.ts';
 import type { Message } from '../message.ts';
 import type { Router } from '../router.ts';
-import { fetchJson, pollEach, signJwt, type StateEvent, type StateStore } from './shared.ts';
+import { fetchJson, pollEach, reviewMessage, signJwt, type StateEvent, type StateStore } from './shared.ts';
 
 export interface PlayRelease {
   releaseName?: string;
@@ -83,7 +83,7 @@ async function listReleases(api: PlayApi, pkg: string, track: string): Promise<P
 }
 
 /**
- * One poll of every track, and of vitals for the apps that ask for them. A change no target got
+ * One poll of every track, and of vitals and reviews for the apps that ask for them. A change no target got
  * isn't saved, so the next run sends it again.
  */
 export async function pollPlay(cfg: Pick<Config, 'playApi' | 'apps'>, router: Router, store: StateStore | undefined) {
@@ -97,12 +97,13 @@ export async function pollPlay(cfg: Pick<Config, 'playApi' | 'apps'>, router: Ro
     poll: async (prev) => playDiff(prev, await listReleases(api, app.play!.packageName, track), app, track),
   }))));
   // One state entry per app, for the apps with the option on.
-  const perApp = <S>(key: string, on: 'vitals', poll: (app: AppConfig, pkg: string, prev: S | undefined) => Promise<{ next: S; messages: Message[] }>) =>
+  const perApp = <S>(key: string, on: 'vitals' | 'reviews', poll: (app: AppConfig, pkg: string, prev: S | undefined) => Promise<{ next: S; messages: Message[] }>) =>
     pollEach<S>(store, key, router, apps.filter((a) => a.play![on]).map((app) => ({ id: app.play!.packageName, poll: (prev) => poll(app, app.play!.packageName, prev) })));
   await perApp<VitalsState[string]>('play-vitals', 'vitals', async (app, pkg, prev) => {
     const { anomalies, issues } = await listVitals(api, pkg);
     return vitalsDiff(prev, anomalies, issues, app);
   });
+  await perApp<number>('play-reviews', 'reviews', async (app, pkg, prev) => playReviewsDiff(prev, await listReviews(api, pkg), app));
 }
 
 // ---- Android vitals (optional: ConfigPlay.vitals)
@@ -187,4 +188,42 @@ async function listVitals(api: PlayApi, pkg: string) {
   const filter = encodeURIComponent('errorIssueType = CRASH OR errorIssueType = ANR');
   const i = (await fetchJson(`Play error issues ${pkg}`, `${app}/errorIssues:search?pageSize=100&orderBy=distinctUsers%20desc&filter=${filter}`, init, 15_000)) as { errorIssues?: ErrorIssue[] };
   return { anomalies: a.anomalies ?? [], issues: i.errorIssues ?? [] };
+}
+
+// ---- Reviews (optional: ConfigPlay.reviews)
+// https://developers.google.com/android-publisher/reply-to-reviews
+
+export interface PlayReview {
+  reviewId: string;
+  authorName?: string;
+  comments?: { userComment?: { text?: string; lastModified?: { seconds?: string }; starRating?: number; appVersionName?: string; reviewerLanguage?: string } }[];
+}
+
+/** Reviews changed since `prev`, the latest `lastModified` seen (seconds). `prev === undefined` (first poll) records a baseline. */
+export function playReviewsDiff(prev: number | undefined, reviews: PlayReview[], app: AppConfig) {
+  const items = reviews.flatMap((r) => {
+    const c = r.comments?.find((x) => x.userComment)?.userComment;
+    return c ? [{ r, c, t: Number(c.lastModified?.seconds ?? 0) }] : [];
+  });
+  const next = Math.max(prev ?? 0, ...items.map((x) => x.t));
+  if (prev === undefined) return { next, messages: [] };
+  const messages = items.filter((x) => x.t > prev).map(({ r, c, t }) => reviewMessage(app, {
+    id: `play:${app.play!.packageName}:review:${r.reviewId}:${t}`,
+    source: 'Google Play',
+    platform: 'android',
+    rating: c.starRating ?? 0,
+    text: (c.text ?? '').replace(/\t/g, '\n'), // a title and body come joined by a tab
+    author: r.authorName,
+    time: new Date(t * 1000).toISOString(),
+    fields: [{ label: 'Version', value: c.appVersionName ?? '' }, { label: 'Language', value: c.reviewerLanguage ?? '' }],
+    url: 'https://play.google.com/console',
+  }));
+  return { next, messages };
+}
+
+async function listReviews(api: PlayApi, pkg: string): Promise<PlayReview[]> {
+  // shortcut: one page of 100, the API's maximum: enough for a 15-minute poll unless an app gets more reviews than that.
+  const url = `https://androidpublisher.googleapis.com/androidpublisher/v3/applications/${encodeURIComponent(pkg)}/reviews?maxResults=100`;
+  const r = (await fetchJson(`Play reviews ${pkg}`, url, { headers: { authorization: `Bearer ${await accessToken(api)}` } }, 15_000)) as { reviews?: PlayReview[] };
+  return r.reviews ?? [];
 }

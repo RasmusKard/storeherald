@@ -1,9 +1,10 @@
 // App Store Connect API webhooks: https://developer.apple.com/documentation/appstoreconnectapi/webhook-events
 import { createHmac } from 'node:crypto';
-import type { AppConfig, AscApi } from '../config.ts';
+import type { AppConfig, AscApi, Config } from '../config.ts';
 import { errText, log } from '../log.ts';
 import type { Message } from '../message.ts';
-import { fetchJson, platformName, safeEq, signJwt, type StateEvent } from './shared.ts';
+import type { Router } from '../router.ts';
+import { fetchJson, platformName, pollEach, reviewMessage, safeEq, signJwt, type StateEvent, type StateStore } from './shared.ts';
 
 export interface AscEvent {
   data: {
@@ -142,9 +143,10 @@ function jwt(api: AscApi): string {
   return token.value;
 }
 
-const ascFetch = (api: AscApi, path: string) =>
+// Short by default: the webhook reply waits on it.
+const ascFetch = (api: AscApi, path: string, timeoutMs = 3000) =>
   fetchJson(`ASC API ${path.split('?')[0]}`, `https://api.appstoreconnect.apple.com${path}`,
-    { headers: { authorization: `Bearer ${jwt(api)}`, 'content-type': 'application/json' } }, 3000); // short: the webhook reply waits on it
+    { headers: { authorization: `Bearer ${jwt(api)}`, 'content-type': 'application/json' } }, timeoutMs);
 
 // The fields of the JSON:API responses read below.
 type Linkage = { data: { id: string } };
@@ -192,4 +194,46 @@ async function ascDetails(e: AscEvent, api: AscApi | undefined): Promise<AscDeta
     log('warn', 'ASC details lookup failed, sending without them', { err: errText(err) });
   }
   return {};
+}
+
+// ---- Polled on the cron (optional: ConfigAsc.appId)
+
+export interface CustomerReview {
+  id: string;
+  attributes: { rating: number; title?: string; body?: string; reviewerNickname?: string; territory?: string; createdDate: string };
+}
+
+/** Reviews newer than `prev`, the latest `createdDate` seen (epoch ms). `prev === undefined` (first poll) records a baseline. */
+export function ascReviewsDiff(prev: number | undefined, reviews: CustomerReview[], app: AppConfig) {
+  const items = reviews.map((r) => ({ r: r.attributes, id: r.id, t: Date.parse(r.attributes.createdDate) || 0 })); // has a UTC offset: compare as numbers
+  const next = Math.max(prev ?? 0, ...items.map((x) => x.t));
+  if (prev === undefined) return { next, messages: [] };
+  const messages = items.filter((x) => x.t > prev).map(({ r, id, t }) => reviewMessage(app, {
+    id: `asc:review:${id}`,
+    source: 'App Store',
+    platform: 'ios',
+    rating: r.rating,
+    text: [r.title, r.body].filter(Boolean).join('\n'),
+    author: r.reviewerNickname,
+    time: new Date(t).toISOString(),
+    fields: [{ label: 'Country', value: r.territory ?? '' }],
+    url: `https://appstoreconnect.apple.com/apps/${app.asc!.appId}`,
+  }));
+  return { next, messages };
+}
+
+/** One poll of the App Store Connect API for every app that asks for it. */
+export async function pollAsc(cfg: Pick<Config, 'ascApi' | 'apps'>, router: Router, store: StateStore | undefined) {
+  const api = cfg.ascApi;
+  const apps = [...cfg.apps.values()].filter((a) => a.asc?.reviews);
+  if (!api || !apps.length) return;
+  if (!store) return log('error', 'no STATE KV binding: App Store Connect is not polled');
+
+  await pollEach<number>(store, 'asc-reviews', router, apps.map((app) => ({
+    id: app.asc!.appId!,
+    poll: async (prev) => {
+      const path = `/v1/apps/${encodeURIComponent(app.asc!.appId!)}/customerReviews?sort=-createdDate&limit=100&fields[customerReviews]=rating,title,body,reviewerNickname,territory,createdDate`;
+      return ascReviewsDiff(prev, ((await ascFetch(api, path, 15_000)) as { data: CustomerReview[] }).data, app);
+    },
+  })));
 }

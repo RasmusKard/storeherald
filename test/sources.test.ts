@@ -2,10 +2,10 @@ import assert from 'node:assert/strict';
 import { generateKeyPairSync } from 'node:crypto';
 import { test } from 'node:test';
 import type { AppConfig } from '../src/config.ts';
-import { ascMessages, ascToMessages, verifyAsc } from '../src/sources/asc.ts';
+import { ascMessages, ascReviewsDiff, ascToMessages, verifyAsc } from '../src/sources/asc.ts';
 import { easToMessages } from '../src/sources/eas.ts';
 import { ingestToMessage, verifyIngest } from '../src/sources/ingest.ts';
-import { playDiff } from '../src/sources/play.ts';
+import { playDiff, playReviewsDiff } from '../src/sources/play.ts';
 
 const app: AppConfig = { id: 'myapp', name: 'My App' };
 
@@ -84,6 +84,22 @@ void test('Play: first poll is a baseline, then a state change notifies', () => 
   assert.equal(first.messages.length, 0);
   const second = playDiff(first.next, rel('PUBLISHED'), play, 'production');
   assert.deepEqual(second.messages.map((m) => [m.type, m.title]), [['release.live', 'Android live on Google Play: My App 57 (1.4.2)']]);
+});
+
+void test('reviews: the first poll is a baseline, then newer reviews notify with severity by rating', () => {
+  const asc = { ...app, asc: { secret: 's', appId: '123', reviews: true } };
+  const review = (id: string, createdDate: string, rating: number) => ({ id, attributes: { rating, title: 'Crashes', body: 'On login', createdDate } });
+  const first = ascReviewsDiff(undefined, [review('r1', '2025-05-01T10:00:00-07:00', 5)], asc);
+  assert.equal(first.messages.length, 0);
+  // Later than r1 once the offsets are applied, though it sorts earlier as text.
+  const second = ascReviewsDiff(first.next, [review('r2', '2025-05-01T18:30:00+01:00', 1), review('r1', '2025-05-01T10:00:00-07:00', 5)], asc);
+  assert.deepEqual(second.messages.map((m) => [m.title, m.severity, m.body]), [['★☆☆☆☆ App Store review: My App', 'warning', 'Crashes\nOn login']]);
+
+  const play = { ...app, play: { packageName: 'com.acme.myapp', tracks: ['production'], reviews: true } };
+  const p = (seconds: string) => [{ reviewId: 'g1', authorName: 'Kim', comments: [{ userComment: { text: 'Great\tLove it', starRating: 4, lastModified: { seconds } } }] }];
+  const base = playReviewsDiff(undefined, p('100'), play);
+  assert.equal(playReviewsDiff(base.next, p('100'), play).messages.length, 0);
+  assert.deepEqual(playReviewsDiff(base.next, p('200'), play).messages.map((m) => [m.title, m.severity, m.body]), [['★★★★☆ Google Play review: My App', 'success', 'Great\nLove it']]);
 });
 
 void test('ingest: a valid event becomes a message, a javascript: link is rejected', () => {

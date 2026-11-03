@@ -1,4 +1,5 @@
 import { sign, timingSafeEqual } from 'node:crypto';
+import type { AppConfig } from '../config.ts';
 import { errText, log } from '../log.ts';
 import type { Message, Severity } from '../message.ts';
 import type { Router } from '../router.ts';
@@ -69,6 +70,27 @@ export async function pollEach<S>(store: StateStore, key: string, router: Router
   const json = JSON.stringify(state);
   // KV's free plan allows 1,000 writes a day: write only on a change.
   if (json !== raw) await store.put(key, json).catch((err) => log('error', 'could not save poller state', { key, err: String(err) }));
+}
+
+/** A store review. Its severity follows the rating, so a route's `minSeverity: warning` keeps 1 and 2 stars only. */
+export function reviewMessage(app: AppConfig, r: {
+  id: string; source: string; platform: string; rating: number; text: string; author?: string; time: string;
+  fields: { label: string; value: string }[]; url: string;
+}): Message {
+  const stars = Math.min(5, Math.max(1, Math.round(r.rating)));
+  return {
+    id: r.id,
+    type: 'userreview.posted',
+    source: r.source,
+    severity: stars <= 2 ? 'warning' : stars === 3 ? 'info' : 'success',
+    time: r.time,
+    title: `${'★'.repeat(stars)}${'☆'.repeat(5 - stars)} ${r.source} review: ${app.name}`,
+    body: r.text || undefined,
+    actor: r.author,
+    fields: r.fields,
+    links: [{ label: 'Open reviews', url: r.url }],
+    labels: { app: app.id, platform: r.platform },
+  };
 }
 
 const b64u = (x: object) => Buffer.from(JSON.stringify(x)).toString('base64url');
