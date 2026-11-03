@@ -26,8 +26,8 @@ export interface ConfigFile {
    */
   apps: Record<string, ConfigApp>;
   /**
-   * Adds the version number and the platform to App Store Connect messages, and a link to the app to App Review and
-   * release messages. Without it, or when the lookup fails, the message is sent without them and says iOS, with the
+   * Adds the version number and the platform to App Store Connect messages, a link to the app to App Review, TestFlight
+   * and release messages, and the tester's comment, email, device and screenshots to TestFlight feedback. Without it, or when the lookup fails, the message is sent without them and says iOS, with the
    * `platform: ios` label, whatever the app's platform.
    */
   ascApi?: ConfigAscApi;
@@ -48,7 +48,7 @@ export interface ConfigApp {
   /** Receives EAS build and submission webhooks at `/eas/<id>`. */
   eas?: ConfigWebhook;
   /** Receives App Store Connect webhooks at `/asc/<id>`. */
-  asc?: ConfigWebhook;
+  asc?: ConfigAsc;
   /** Polls Google Play, which has no release webhooks. Needs {@link ConfigFile.playApi}. */
   play?: ConfigPlay;
 }
@@ -62,6 +62,24 @@ export interface ConfigWebhook {
   secret: string;
 }
 
+/** The App Store Connect source of a {@link ConfigApp}. */
+export interface ConfigAsc extends ConfigWebhook {
+  /**
+   * The app's Apple ID, the number in its App Store Connect URL. With it, the Worker polls the App Store Connect API
+   * with {@link ConfigFile.ascApi} on its cron schedule, in `wrangler.jsonc`, and posts phased release changes:
+   * `rollout.updated` for each day's new percentage or a resume, `rollout.paused` and `rollout.completed`. It also posts
+   * `appreview.unresolved` when App Review sends back a submission whose version wasn't rejected, such as one for an
+   * in-app purchase or event. The first poll only records the current state.
+   */
+  appId?: string;
+  /**
+   * Posts App Store reviews written since the last poll, as `userreview.posted`. The first poll only records the
+   * current ones.
+   * @default `false`
+   */
+  reviews?: boolean;
+}
+
 /** The Google Play source of a {@link ConfigApp}. */
 export interface ConfigPlay {
   /** The app's package name, such as `com.acme.myapp`. */
@@ -71,6 +89,20 @@ export interface ConfigPlay {
    * event, on any other track a `testing.build.available` event.
    */
   tracks: string[];
+  /**
+   * Also posts Android vitals alerts: `vitals.anomaly` when Google flags a vitals rate, such as the crash or ANR rate, as
+   * unexpectedly high, and `vitals.issue` for a crash or ANR issue the Worker hasn't seen before. The first poll only
+   * records the current ones. Needs the *Google Play Developer Reporting API* enabled in the service account's Google
+   * Cloud project.
+   * @default `false`
+   */
+  vitals?: boolean;
+  /**
+   * Also posts reviews written or edited since the last poll, as `userreview.posted`. Google's API only returns reviews
+   * with text, on production. The service account needs the *Reply to reviews* permission in Play Console.
+   * @default `false`
+   */
+  reviews?: boolean;
 }
 
 /** An App Store Connect API team key, from App Store Connect › Users and Access › Integrations › Team keys. The Developer role is enough. */
@@ -111,12 +143,23 @@ export interface ConfigRoute {
    * | `build.canceled`, `submit.canceled` | `info` | EAS |
    * | `build.processing_failed` | `error` | App Store Connect |
    * | `testing.build.available` | `success` | App Store Connect, Google Play |
+   * | `betareview.submitted`, `betareview.in_review` | `info` | App Store Connect (TestFlight external testing) |
+   * | `betareview.approved` | `success` | App Store Connect (TestFlight external testing) |
+   * | `betareview.rejected` | `error` | App Store Connect (TestFlight external testing) |
+   * | `testing.feedback` | `info` | App Store Connect (TestFlight feedback with a screenshot) |
+   * | `testing.crash` | `warning` | App Store Connect (TestFlight feedback on a crash) |
    * | `appreview.submitted` | `info` | App Store Connect |
    * | `appreview.in_review` | `info` | App Store Connect, Google Play |
    * | `appreview.approved` | `success` | App Store Connect, Google Play |
    * | `appreview.rejected` | `error` | App Store Connect, Google Play |
    * | `appreview.withdrawn` | `info` | App Store Connect |
+   * | `appreview.unresolved` | `error` | App Store Connect ({@link ConfigAsc.appId}) |
    * | `release.live` | `success` | App Store Connect, Google Play |
+   * | `vitals.anomaly`, `vitals.issue` | `warning` | Google Play ({@link ConfigPlay.vitals}) |
+   * | `rollout.updated` | `info` | App Store Connect ({@link ConfigAsc.appId}) |
+   * | `rollout.paused` | `warning` | App Store Connect ({@link ConfigAsc.appId}) |
+   * | `rollout.completed` | `success` | App Store Connect ({@link ConfigAsc.appId}) |
+   * | `userreview.posted` | `warning` for 1 or 2 stars, `info` for 3, `success` for 4 or 5 | App Store Connect ({@link ConfigAsc.reviews}), Google Play ({@link ConfigPlay.reviews}) |
    *
    * EAS sends no event when a build or submission starts.
    */
@@ -231,14 +274,23 @@ function parseApps(v: unknown): Map<string, AppConfig> {
     if (!/^[a-z0-9-]+$/.test(id)) throw new Error(`config: app id "${id}" may only contain a-z, 0-9 and -`);
     const a = obj(raw, w, keysOf<ConfigApp>({ name: true, eas: true, asc: true, play: true }));
     const eas = a.eas == null ? undefined : obj(a.eas, `${w}.eas`, keysOf<ConfigWebhook>({ secret: true }));
-    const asc = a.asc == null ? undefined : obj(a.asc, `${w}.asc`, keysOf<ConfigWebhook>({ secret: true }));
-    const play = a.play == null ? undefined : obj(a.play, `${w}.play`, keysOf<ConfigPlay>({ packageName: true, tracks: true }));
+    const asc = a.asc == null ? undefined : obj(a.asc, `${w}.asc`, keysOf<ConfigAsc>({ secret: true, appId: true, reviews: true }));
+    const play = a.play == null ? undefined : obj(a.play, `${w}.play`, keysOf<ConfigPlay>({ packageName: true, tracks: true, vitals: true, reviews: true }));
     apps.set(id, {
       id,
       name: str(a, 'name', w),
       eas: eas && { secret: str(eas, 'secret', `${w}.eas`) },
-      asc: asc && { secret: str(asc, 'secret', `${w}.asc`) },
-      play: play && { packageName: str(play, 'packageName', `${w}.play`), tracks: strList(play, 'tracks', `${w}.play`) },
+      asc: asc && {
+        secret: str(asc, 'secret', `${w}.asc`),
+        appId: asc.appId == null ? undefined : str(asc, 'appId', `${w}.asc`),
+        reviews: bool(asc, 'reviews', `${w}.asc`, DEFAULTS.ConfigAsc.reviews),
+      },
+      play: play && {
+        packageName: str(play, 'packageName', `${w}.play`),
+        tracks: strList(play, 'tracks', `${w}.play`),
+        vitals: bool(play, 'vitals', `${w}.play`, DEFAULTS.ConfigPlay.vitals),
+        reviews: bool(play, 'reviews', `${w}.play`, DEFAULTS.ConfigPlay.reviews),
+      },
     });
   }
   return apps;
@@ -321,9 +373,14 @@ export function parseConfig(raw: unknown): Config {
   const playApi = root.playApi == null ? undefined : parsePlayApi(root.playApi);
   const unpolled = [...apps.values()].find((a) => a.play && !playApi);
   if (unpolled) throw new Error(`config: apps.${unpolled.id}.play needs playApi`);
+  const ascApi = root.ascApi == null ? undefined : parseAscApi(root.ascApi);
+  for (const a of apps.values()) {
+    if (a.asc?.reviews && !a.asc.appId) throw new Error(`config: apps.${a.id}.asc.reviews needs asc.appId`);
+    if (a.asc?.appId && !ascApi) throw new Error(`config: apps.${a.id}.asc.appId needs ascApi`);
+  }
   return {
     apps,
-    ascApi: root.ascApi == null ? undefined : parseAscApi(root.ascApi),
+    ascApi,
     playApi,
     ingest: root.ingest == null ? undefined : parseIngest(root.ingest),
     targets,

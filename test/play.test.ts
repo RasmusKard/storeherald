@@ -36,3 +36,21 @@ void test('poll: nothing is saved when the state fails to load, is unchanged, or
   await pollPlay(cfg, router('retry'), { get: async () => stored('IN_REVIEW'), put });
   assert.equal(put.mock.callCount(), 0);
 });
+
+void test('vitals: the first poll is a baseline, then new anomalies and issues notify', async (t) => {
+  const vitalsApp: AppConfig = { ...app, play: { ...app.play!, vitals: true } };
+  const anomaly = { name: 'apps/com.acme.myapp/anomalies/a2', metricSet: 'apps/com.acme.myapp/anrRateMetricSet', metric: { metric: 'anrRate', decimalValue: { value: '0.0123' } } };
+  const issue = { name: 'apps/com.acme.myapp/i2', type: 'CRASH', cause: 'IllegalStateException', firstAppVersion: { versionCode: '57' }, lastAppVersion: { versionCode: '57' } };
+  t.mock.method(globalThis, 'fetch', async (url: string) =>
+    Response.json(url.includes('oauth2') ? { access_token: 't', expires_in: 3600 } : url.includes('anomalies') ? { anomalies: [anomaly] } : { errorIssues: [issue] }));
+  const sent: { title: string }[] = [];
+  const router = { deliver: async (msgs: { title: string }[]) => (sent.push(...msgs), 'ok' as const) };
+  const kv = new Map<string, string>();
+  const store = { get: async (k: string) => kv.get(k) ?? null, put: async (k: string, v: string) => void kv.set(k, v) };
+  const vcfg = { ...cfg, apps: new Map([[app.id, vitalsApp]]) };
+  await pollPlay(vcfg, router, store);
+  assert.equal(sent.length, 0);
+  kv.set('play-vitals', JSON.stringify({ 'com.acme.myapp': { anomalies: ['apps/com.acme.myapp/anomalies/a1'], issues: ['apps/com.acme.myapp/i1'] } }));
+  await pollPlay(vcfg, router, store);
+  assert.deepEqual(sent.map((m) => m.title), ['Android ANR rate above normal: My App', 'New Android crash in My App: IllegalStateException']);
+});

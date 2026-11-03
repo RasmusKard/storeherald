@@ -46,7 +46,7 @@ To upgrade, run `git fetch --tags`, check out the newest tag the same way, then 
    npx wrangler secret put EAS_WEBHOOK_SECRET
    ```
 
-3. If you don't use Google Play, remove `triggers` and `kv_namespaces` from [`wrangler.jsonc`](wrangler.jsonc). Otherwise set its cron schedule to how often to poll, at most every 2 minutes: a faster schedule can post a change twice.
+3. If you neither use Google Play nor set `asc.appId`, remove `triggers` and `kv_namespaces` from [`wrangler.jsonc`](wrangler.jsonc). Otherwise set its cron schedule to how often to poll, at most every 2 minutes: a faster schedule can post a change twice.
 4. Deploy with `npx wrangler deploy`. It prints the Worker's URL.
 5. [Connect the sources](#sources).
 6. Logs are JSON lines in the Worker's logs. Alert on those with `"level":"error"` and point your uptime check at `GET /health_check`, which fails when the config does.
@@ -72,17 +72,21 @@ eas webhook:create --event SUBMIT --url https://your.host/eas/myapp --secret "$E
 
 - URL: `https://your.host/asc/myapp`.
 - Secret: the one in `config.yaml`.
-- Events: *App Store version state changes* and *Build upload state changes*.
+- Events: *App Store version state changes*, *Build upload state changes* and, for TestFlight, the external build state and beta feedback triggers.
 
 Add [`ascApi`](https://rasmuskard.github.io/storeherald/interfaces/ConfigAscApi.html) to the config to get version numbers in messages.
 
+Phased releases, App Store reviews and App Review results for in-app purchases and events have no webhook. With [`asc.appId`](https://rasmuskard.github.io/storeherald/interfaces/ConfigAsc.html) set, the Worker polls them on the cron schedule in [`wrangler.jsonc`](wrangler.jsonc), keeping what it has seen in the `STATE` KV namespace.
+
 ### Google Play
 
-The Worker polls Play on the cron schedule in [`wrangler.jsonc`](wrangler.jsonc) and keeps the release states it has seen in the `STATE` KV namespace, which `wrangler deploy` creates. The first poll only records the current state. Messages start with the next change.
+The Worker polls Play on the cron schedule in [`wrangler.jsonc`](wrangler.jsonc) and keeps what it has seen in the `STATE` KV namespace, which `wrangler deploy` creates. The first poll only records the current state. Messages start with the next change.
 
 - In a Google Cloud project, enable the *Google Play Android Developer API*.
 - Create a service account in that project and download its JSON key.
 - Invite it in Play Console › Users and permissions with read-only access to the app.
+- For [`vitals`](https://rasmuskard.github.io/storeherald/interfaces/ConfigPlay.html#vitals) alerts, also enable the *Google Play Developer Reporting API* in that project.
+- For [`reviews`](https://rasmuskard.github.io/storeherald/interfaces/ConfigPlay.html#reviews), also give it the *Reply to reviews* permission.
 
 ### Custom events
 

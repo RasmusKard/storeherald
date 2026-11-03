@@ -2,10 +2,11 @@ import { loadConfig, type Config } from './config.ts';
 import { log } from './log.ts';
 import { createRouter, type Router } from './router.ts';
 import type { Message } from './message.ts';
-import { ascMessages, isAscEvent, verifyAsc } from './sources/asc.ts';
+import { ascMessages, isAscEvent, pollAsc, verifyAsc } from './sources/asc.ts';
 import { easToMessages, isEasPayload, verifyEas } from './sources/eas.ts';
 import { ingestToMessage, verifyIngest } from './sources/ingest.ts';
-import { pollPlay, type StateStore } from './sources/play.ts';
+import { pollPlay } from './sources/play.ts';
+import type { StateStore } from './sources/shared.ts';
 
 const MAX_BODY = 1024 * 1024;
 
@@ -76,7 +77,7 @@ async function handle(cfg: Config, req: Request, path: string[]): Promise<Messag
 
 export interface Env {
   STOREHERALD_CONFIG: string;
-  /** KV namespace for the Google Play states seen. Required when Play is polled. */
+  /** KV namespace for what the pollers have seen. Required when Google Play or App Store Connect is polled. */
   STATE?: StateStore;
   [name: string]: unknown; // the variables and secrets the config references
 }
@@ -117,6 +118,7 @@ export default {
     try {
       const { cfg, router } = init(env);
       await pollPlay(cfg, router, env.STATE);
+      await pollAsc(cfg, router, env.STATE);
     } catch (err) {
       log('error', 'cron run failed', { err: String(err) }); // as a log line, so error alerts see a broken config here too
     }

@@ -1,15 +1,16 @@
 // App Store Connect API webhooks: https://developer.apple.com/documentation/appstoreconnectapi/webhook-events
 import { createHmac } from 'node:crypto';
-import type { AppConfig, AscApi } from '../config.ts';
+import type { AppConfig, AscApi, Config } from '../config.ts';
 import { errText, log } from '../log.ts';
 import type { Message } from '../message.ts';
-import { fetchJson, platformName, safeEq, signJwt, type StateEvent } from './shared.ts';
+import type { Router } from '../router.ts';
+import { fetchJson, platformName, pollEach, reviewMessage, safeEq, signJwt, type StateEvent, type StateStore } from './shared.ts';
 
 export interface AscEvent {
   data: {
     type: string;
     id: string;
-    attributes?: null | { oldValue?: string; newValue?: string; newState?: string; timestamp?: string };
+    attributes?: null | { oldValue?: string; newValue?: string; newState?: string; newExternalBuildState?: string; timestamp?: string };
     relationships?: { instance?: { data?: { type: string; id: string } } };
   };
 }
@@ -18,6 +19,7 @@ export interface AscDetails {
   version?: string; // "1.4.2" or "1.4.2 (57)"
   platform?: string; // IOS, MAC_OS, ...
   appleAppId?: string;
+  feedback?: { comment?: string; email?: string; device?: string; os?: string; screenshots?: string[] };
 }
 
 export const verifyAsc = (raw: Buffer, header: string | undefined, secret: string) =>
@@ -38,6 +40,19 @@ function versionEvents(oldValue: string | undefined, newValue: string): StateEve
   if (newValue === 'READY_FOR_DISTRIBUTION') out.push({ type: 'release.live', severity: 'success', what: 'live on the App Store' });
   return out;
 }
+
+const BETA_REVIEW: Record<string, StateEvent> = {
+  WAITING_FOR_BETA_REVIEW: { type: 'betareview.submitted', severity: 'info', what: 'submitted for TestFlight review' },
+  IN_BETA_REVIEW: { type: 'betareview.in_review', severity: 'info', what: 'in TestFlight review' },
+  BETA_REJECTED: { type: 'betareview.rejected', severity: 'error', what: 'rejected in TestFlight review' },
+  BETA_APPROVED: { type: 'betareview.approved', severity: 'success', what: 'approved in TestFlight review' },
+  IN_BETA_TESTING: { type: 'testing.build.available', severity: 'success', what: 'available to external testers in TestFlight' },
+};
+
+const FEEDBACK: Record<string, StateEvent> = {
+  betaFeedbackScreenshotSubmissionCreated: { type: 'testing.feedback', severity: 'info', what: 'TestFlight feedback' },
+  betaFeedbackCrashSubmissionCreated: { type: 'testing.crash', severity: 'warning', what: 'TestFlight crash report' },
+};
 
 export function ascToMessages(e: AscEvent, app: AppConfig, d: AscDetails = {}): Message[] {
   const { type, id } = e.data;
@@ -69,6 +84,36 @@ export function ascToMessages(e: AscEvent, app: AppConfig, d: AscDetails = {}): 
       links: [{ label: 'Open TestFlight', url: 'https://appstoreconnect.apple.com/apps' }], // buildUploads have no app id to deep-link
     }];
   }
+  const beta = type === 'buildBetaDetailExternalBuildStateUpdated' && a.newExternalBuildState ? BETA_REVIEW[a.newExternalBuildState] : undefined;
+  if (beta) {
+    return [{
+      ...base,
+      id: `asc:${id}`,
+      type: beta.type,
+      severity: beta.severity,
+      title: `${platform} build ${beta.what}: ${name}`,
+      body: beta.type === 'betareview.rejected' ? 'Apple does not expose the reason via the API: see TestFlight in App Store Connect.' : undefined,
+      links: [{ label: 'Open TestFlight', url: appUrl ? `${appUrl}/testflight` : 'https://appstoreconnect.apple.com/apps' }],
+    }];
+  }
+  const fb = FEEDBACK[type];
+  if (fb) {
+    const f = d.feedback ?? {};
+    return [{
+      ...base,
+      id: `asc:${id}`,
+      type: fb.type,
+      severity: fb.severity,
+      title: `${platform} ${fb.what}: ${name}`,
+      body: f.comment || undefined,
+      actor: f.email,
+      fields: [{ label: 'Device', value: f.device ?? '' }, { label: 'OS', value: f.os ?? '' }],
+      links: [
+        { label: 'Open TestFlight', url: appUrl ? `${appUrl}/testflight` : 'https://appstoreconnect.apple.com/apps' },
+        ...(f.screenshots ?? []).map((url, i) => ({ label: `Screenshot ${i + 1}`, url })), // signed URLs that expire
+      ],
+    }];
+  }
   return [];
 }
 
@@ -98,9 +143,30 @@ function jwt(api: AscApi): string {
   return token.value;
 }
 
-const ascFetch = (api: AscApi, path: string) =>
+// Short by default: the webhook reply waits on it.
+const ascFetch = (api: AscApi, path: string, timeoutMs = 3000) =>
   fetchJson(`ASC API ${path.split('?')[0]}`, `https://api.appstoreconnect.apple.com${path}`,
-    { headers: { authorization: `Bearer ${jwt(api)}`, 'content-type': 'application/json' } }, 3000); // short: the webhook reply waits on it
+    { headers: { authorization: `Bearer ${jwt(api)}`, 'content-type': 'application/json' } }, timeoutMs);
+
+// The fields of the JSON:API responses read below.
+type Linkage = { data: { id: string } };
+interface BuildResponse {
+  data: { attributes: { version: string }; relationships?: { app?: Linkage } };
+  included?: { type: string; attributes: { version?: string; platform?: string } }[];
+}
+interface FeedbackResponse {
+  data: {
+    attributes: { comment?: string; email?: string; deviceModel?: string; osVersion?: string; screenshots?: { url: string }[] };
+    relationships: { build: Linkage };
+  };
+}
+
+async function buildDetails(api: AscApi, buildId: string): Promise<AscDetails> {
+  const r = (await ascFetch(api, `/v1/builds/${encodeURIComponent(buildId)}?include=preReleaseVersion,app&fields[builds]=version,preReleaseVersion,app&fields[preReleaseVersions]=version,platform&fields[apps]=bundleId`)) as BuildResponse;
+  const pre = r.included?.find((x) => x.type === 'preReleaseVersions')?.attributes;
+  const build = r.data.attributes.version;
+  return { version: pre ? `${pre.version} (${build})` : build, platform: pre?.platform, appleAppId: r.data.relationships?.app?.data?.id };
+}
 
 async function ascDetails(e: AscEvent, api: AscApi | undefined): Promise<AscDetails> {
   const inst = e.data.relationships?.instance?.data;
@@ -114,8 +180,153 @@ async function ascDetails(e: AscEvent, api: AscApi | undefined): Promise<AscDeta
       const a = (await ascFetch(api, `/v1/buildUploads/${encodeURIComponent(inst.id)}`)).data.attributes;
       return { version: `${a.cfBundleShortVersionString} (${a.cfBundleVersion})`, platform: a.platform };
     }
+    if (inst.type === 'buildBetaDetails') {
+      const r = (await ascFetch(api, `/v1/buildBetaDetails/${encodeURIComponent(inst.id)}/relationships/build`)) as Linkage;
+      return await buildDetails(api, r.data.id);
+    }
+    if (inst.type === 'betaFeedbackScreenshotSubmissions' || inst.type === 'betaFeedbackCrashSubmissions') {
+      const r = (await ascFetch(api, `/v1/${inst.type}/${encodeURIComponent(inst.id)}?include=build&fields[builds]=version`)) as FeedbackResponse;
+      const a = r.data.attributes;
+      const feedback = { comment: a.comment, email: a.email, device: a.deviceModel, os: a.osVersion, screenshots: a.screenshots?.map((x) => x.url) };
+      return { ...(await buildDetails(api, r.data.relationships.build.data.id)), feedback };
+    }
   } catch (err) {
     log('warn', 'ASC details lookup failed, sending without them', { err: errText(err) });
   }
   return {};
+}
+
+// ---- Polled on the cron (optional: ConfigAsc.appId)
+
+export interface CustomerReview {
+  id: string;
+  attributes: { rating: number; title?: string; body?: string; reviewerNickname?: string; territory?: string; createdDate: string };
+}
+
+/** Reviews newer than `prev`, the latest `createdDate` seen (epoch ms). `prev === undefined` (first poll) records a baseline. */
+export function ascReviewsDiff(prev: number | undefined, reviews: CustomerReview[], app: AppConfig) {
+  const items = reviews.map((r) => ({ r: r.attributes, id: r.id, t: Date.parse(r.attributes.createdDate) || 0 })); // has a UTC offset: compare as numbers
+  const next = Math.max(prev ?? 0, ...items.map((x) => x.t));
+  if (prev === undefined) return { next, messages: [] };
+  const messages = items.filter((x) => x.t > prev).map(({ r, id, t }) => reviewMessage(app, {
+    id: `asc:review:${id}`,
+    source: 'App Store',
+    platform: 'ios',
+    rating: r.rating,
+    text: [r.title, r.body].filter(Boolean).join('\n'),
+    author: r.reviewerNickname,
+    time: new Date(t).toISOString(),
+    fields: [{ label: 'Country', value: r.territory ?? '' }],
+    url: `https://appstoreconnect.apple.com/apps/${app.asc!.appId}`,
+  }));
+  return { next, messages };
+}
+
+export interface LiveVersions {
+  data: { id: string; attributes: { versionString: string; platform: string }; relationships?: { appStoreVersionPhasedRelease?: { data?: { id: string } | null } } }[];
+  included?: { type: string; id: string; attributes: { phasedReleaseState: string; currentDayNumber?: number } }[];
+}
+/** appStoreVersion id -> `${phasedReleaseState}:${currentDayNumber}` */
+export type PhasedState = Record<string, string>;
+
+const PHASED_PERCENT = [1, 2, 5, 10, 20, 50, 100]; // by day: Apple's fixed schedule
+
+function phasedEvent(state: string, day: number): StateEvent | undefined {
+  const pct = `${PHASED_PERCENT[Math.min(day, 7) - 1] ?? 0}%`;
+  if (state === 'ACTIVE') return { type: 'rollout.updated', severity: 'info', what: `phased release at ${pct} (day ${day} of 7)` };
+  if (state === 'PAUSED') return { type: 'rollout.paused', severity: 'warning', what: `phased release paused at ${pct}` };
+  if (state === 'COMPLETE') return { type: 'rollout.completed', severity: 'success', what: 'phased release complete' };
+  return undefined;
+}
+
+/** Phased release changes of the live versions. `prev === undefined` (first poll) records a baseline and notifies nothing. */
+export function phasedDiff(prev: PhasedState | undefined, r: LiveVersions, app: AppConfig) {
+  const next: PhasedState = {};
+  const messages: Message[] = [];
+  for (const v of r.data) {
+    const pid = v.relationships?.appStoreVersionPhasedRelease?.data?.id;
+    const p = r.included?.find((x) => x.type === 'appStoreVersionPhasedReleases' && x.id === pid)?.attributes;
+    if (!p) continue; // released to everyone at once
+    const day = p.currentDayNumber ?? 0;
+    const state = `${p.phasedReleaseState}:${day}`;
+    next[v.id] = state;
+    if (!prev || prev[v.id] === state) continue;
+
+    const ev = phasedEvent(p.phasedReleaseState, day);
+    if (!ev) continue;
+    const platform = platformName(v.attributes.platform);
+    messages.push({
+      id: `asc:${v.id}:${state}`,
+      type: ev.type,
+      source: 'App Store Connect',
+      severity: ev.severity,
+      title: `${platform} ${ev.what}: ${app.name} ${v.attributes.versionString}`,
+      links: [{ label: 'Open in App Store Connect', url: `https://appstoreconnect.apple.com/apps/${app.asc!.appId}/distribution` }],
+      labels: { app: app.id, platform: platform.toLowerCase() },
+    });
+  }
+  return { next, messages };
+}
+
+export interface UnresolvedSubmissions {
+  data: { id: string; attributes: { platform?: string }; relationships?: { appStoreVersionForReview?: { data?: { id: string } | null } } }[];
+  included?: { type: string; id: string; attributes: { versionString?: string; appVersionState?: string } }[];
+}
+
+/**
+ * Submissions App Review sent back, such as for an in-app purchase or event, that no version webhook reports: those
+ * whose version was rejected are skipped. `prev === undefined` (first poll) records a baseline and notifies nothing.
+ */
+export function unresolvedDiff(prev: string[] | undefined, r: UnresolvedSubmissions, app: AppConfig) {
+  const next = r.data.map((s) => s.id);
+  if (!prev) return { next, messages: [] };
+  const messages = r.data.filter((s) => !prev.includes(s.id)).flatMap((s): Message[] => {
+    const vid = s.relationships?.appStoreVersionForReview?.data?.id;
+    const v = r.included?.find((x) => x.type === 'appStoreVersions' && x.id === vid)?.attributes;
+    if (v?.appVersionState && REJECTED.includes(v.appVersionState)) return [];
+    const platform = platformName(s.attributes.platform ?? 'IOS');
+    return [{
+      id: `asc:submission:${s.id}`,
+      type: 'appreview.unresolved',
+      source: 'App Store Connect',
+      severity: 'error',
+      title: `${platform} App Review found unresolved issues: ${app.name}${v?.versionString ? ` ${v.versionString}` : ''}`,
+      body: 'Apple does not expose the reason via the API: see the App Review message in App Store Connect.',
+      links: [{ label: 'Open in App Store Connect', url: `https://appstoreconnect.apple.com/apps/${app.asc!.appId}/distribution` }],
+      labels: { app: app.id, platform: platform.toLowerCase() },
+    }];
+  });
+  return { next, messages };
+}
+
+/** One poll of the App Store Connect API for every app with ConfigAsc.appId. */
+export async function pollAsc(cfg: Pick<Config, 'ascApi' | 'apps'>, router: Router, store: StateStore | undefined) {
+  const api = cfg.ascApi;
+  const apps = [...cfg.apps.values()].filter((a) => a.asc?.appId);
+  if (!api || !apps.length) return;
+  if (!store) return log('error', 'no STATE KV binding: App Store Connect is not polled');
+
+  await pollEach<PhasedState>(store, 'asc-phased', router, apps.map((app) => ({
+    id: app.asc!.appId!,
+    poll: async (prev) => {
+      const path = `/v1/apps/${encodeURIComponent(app.asc!.appId!)}/appStoreVersions?filter[appVersionState]=READY_FOR_DISTRIBUTION&include=appStoreVersionPhasedRelease`
+        + '&fields[appStoreVersions]=versionString,platform,appStoreVersionPhasedRelease&fields[appStoreVersionPhasedReleases]=phasedReleaseState,currentDayNumber';
+      return phasedDiff(prev, (await ascFetch(api, path, 15_000)) as LiveVersions, app);
+    },
+  })));
+  await pollEach<string[]>(store, 'asc-submissions', router, apps.map((app) => ({
+    id: app.asc!.appId!,
+    poll: async (prev) => {
+      const path = `/v1/apps/${encodeURIComponent(app.asc!.appId!)}/reviewSubmissions?filter[state]=UNRESOLVED_ISSUES&include=appStoreVersionForReview`
+        + '&fields[reviewSubmissions]=platform,appStoreVersionForReview&fields[appStoreVersions]=versionString,appVersionState';
+      return unresolvedDiff(prev, (await ascFetch(api, path, 15_000)) as UnresolvedSubmissions, app);
+    },
+  })));
+  await pollEach<number>(store, 'asc-reviews', router, apps.filter((a) => a.asc!.reviews).map((app) => ({
+    id: app.asc!.appId!,
+    poll: async (prev) => {
+      const path = `/v1/apps/${encodeURIComponent(app.asc!.appId!)}/customerReviews?sort=-createdDate&limit=100&fields[customerReviews]=rating,title,body,reviewerNickname,territory,createdDate`;
+      return ascReviewsDiff(prev, ((await ascFetch(api, path, 15_000)) as { data: CustomerReview[] }).data, app);
+    },
+  })));
 }
