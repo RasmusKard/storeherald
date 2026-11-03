@@ -1,5 +1,17 @@
 # Changelog
 
+## [2.1.0](https://github.com/RasmusKard/storeherald/compare/v2.0.0...v2.1.0) (2026-11-03)
+
+
+### Features
+
+* Notify on TestFlight external beta review and when a build reaches external testers ([d856274](https://github.com/RasmusKard/storeherald/commit/d8562741faf074a76f5ba984285bbb6961a3a79e))
+* Notify when App Review sends back a submission the version webhook doesn't report ([d856274](https://github.com/RasmusKard/storeherald/commit/d8562741faf074a76f5ba984285bbb6961a3a79e))
+* Post Android vitals anomalies and new crash and ANR issues from Google Play ([d856274](https://github.com/RasmusKard/storeherald/commit/d8562741faf074a76f5ba984285bbb6961a3a79e))
+* Post App Store phased release progress ([d856274](https://github.com/RasmusKard/storeherald/commit/d8562741faf074a76f5ba984285bbb6961a3a79e))
+* Post new App Store and Google Play reviews ([d856274](https://github.com/RasmusKard/storeherald/commit/d8562741faf074a76f5ba984285bbb6961a3a79e))
+* Post TestFlight tester feedback and crash reports ([d856274](https://github.com/RasmusKard/storeherald/commit/d8562741faf074a76f5ba984285bbb6961a3a79e))
+
 ## [2.0.0](https://github.com/RasmusKard/storeherald/compare/v1.0.0...v2.0.0) (2026-11-02)
 
 
