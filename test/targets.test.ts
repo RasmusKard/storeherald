@@ -32,6 +32,14 @@ void test('slack: renders within block limits, no injected mentions', () => {
   assert.ok(!json(p).includes('<!channel>'));
 });
 
+void test('slack: a cut title never ends in half an escape', () => {
+  const cfg = slack.parseConfig({ url: 'https://hooks.slack.com/services/x' });
+  for (let n = 294; n < 300; n++) {
+    const p = slack.render({ ...worst, title: 'a'.repeat(n) + '<b', links: [] }, cfg, plain) as any;
+    assert.doesNotMatch(p.text, /&\w*…/);
+  }
+});
+
 void test('discord: renders within the 6000-char embed total, no pings', () => {
   const cfg = discord.parseConfig({ url: 'https://discord.com/api/webhooks/1/abc' });
   assert.equal(cfg.url, 'https://discord.com/api/v10/webhooks/1/abc?wait=true&with_components=true');
