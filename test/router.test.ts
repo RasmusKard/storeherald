@@ -53,6 +53,11 @@ void test('config: play settings without playApi fail loading', () => {
   assert.throws(() => parseConfig({ ...baseConfig, apps }), /apps\.myapp\.play needs playApi/);
 });
 
+void test('config: an unknown key fails loading', () => {
+  const routes = [{ types: ['*'], targets: ['a'], minseverity: 'error' }];
+  assert.throws(() => parseConfig({ ...baseConfig, routes }), /unknown key\(s\) in routes\[0\]: minseverity/);
+});
+
 void test('config: errors never echo secrets', () => {
   const key = 'eyJ0eXBlIjoic2VydmljZV9hY2NvdW50IiwicHJpdmF0ZV9rZXkiOiJTRUNSRVQifQ';
   assert.throws(() => parseConfig({ ...baseConfig, playApi: { serviceAccount: key } }), (e: Error) => !e.message.includes(key));
@@ -82,4 +87,20 @@ void test('router: asks for a resend when no target got the message', async () =
   assert.equal(await router.deliver([msg()]), 'retry');
   status = undefined;
   assert.equal(await router.deliver([msg()]), 'ok');
+});
+
+void test('router: no resend once a target got the message, or when every failed target rejected it', async () => {
+  const target = (status?: number): TargetInstance => ({
+    render: () => ({}),
+    send: async () => {
+      if (status) throw Object.assign(new Error('x'), { status });
+    },
+  });
+  const { routes } = parseConfig({ ...baseConfig, routes: [{ types: ['*'], targets: ['a', 'b'] }] });
+  const deliver = (a: TargetInstance, b: TargetInstance) => createRouter({ routes, targets: new Map([['a', a], ['b', b]]) }).deliver([msg()]);
+  // A resend would post it again where it landed.
+  assert.equal(await deliver(target(503), target()), 'ok');
+  // A resend can't fix a 4xx.
+  assert.equal(await deliver(target(404), target(404)), 'ok');
+  assert.equal(await deliver(target(503), target(404)), 'retry');
 });
