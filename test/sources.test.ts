@@ -51,6 +51,13 @@ void test('ASC: version state changes map to review and release events', () => {
   assert.deepEqual(types('PREPARE_FOR_SUBMISSION', 'READY_FOR_REVIEW'), []);
 });
 
+void test('ASC: without looked-up details, links fall back to asc.appId', () => {
+  const asc = { ...app, asc: { secret: 's', appId: '123' } };
+  const link = (type: string, attributes: object) => ascToMessages({ data: { type, id: 'e1', attributes } }, asc)[0].links?.[0].url;
+  assert.equal(link('buildUploadStateUpdated', { newState: 'COMPLETE' }), 'https://appstoreconnect.apple.com/apps/123/testflight');
+  assert.equal(link('appStoreVersionAppVersionStateUpdated', { oldValue: 'IN_REVIEW', newValue: 'REJECTED' }), 'https://appstoreconnect.apple.com/apps/123/distribution');
+});
+
 void test("ASC: Apple's external TestFlight example maps to a beta review approval, with the build looked up", async (t) => {
   const event = {
     data: {

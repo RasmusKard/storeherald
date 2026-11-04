@@ -59,7 +59,8 @@ export function ascToMessages(e: AscEvent, app: AppConfig, d: AscDetails = {}): 
   const a = e.data.attributes ?? {}; // the undocumented test ping may have none, or null
   const platform = platformName(d.platform ?? 'IOS');
   const name = `${app.name}${d.version ? ` ${d.version}` : ''}`;
-  const appUrl = d.appleAppId && `https://appstoreconnect.apple.com/apps/${d.appleAppId}`;
+  const appleAppId = d.appleAppId ?? app.asc?.appId;
+  const appUrl = appleAppId && `https://appstoreconnect.apple.com/apps/${appleAppId}`;
   const base = { source: 'App Store Connect', time: a.timestamp, labels: { app: app.id, platform: platform.toLowerCase() } };
 
   if (type === 'appStoreVersionAppVersionStateUpdated' && a.newValue) {
@@ -81,7 +82,7 @@ export function ascToMessages(e: AscEvent, app: AppConfig, d: AscDetails = {}): 
       type: ok ? 'testing.build.available' : 'build.processing_failed',
       severity: ok ? 'success' : 'error',
       title: ok ? `${platform} build processed, available in TestFlight: ${name}` : `${platform} build failed App Store Connect processing: ${name}`,
-      links: [{ label: 'Open TestFlight', url: 'https://appstoreconnect.apple.com/apps' }], // buildUploads have no app id to deep-link
+      links: [{ label: 'Open TestFlight', url: appUrl ? `${appUrl}/testflight` : 'https://appstoreconnect.apple.com/apps' }],
     }];
   }
   const beta = type === 'buildBetaDetailExternalBuildStateUpdated' && a.newExternalBuildState ? BETA_REVIEW[a.newExternalBuildState] : undefined;
