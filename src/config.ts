@@ -86,7 +86,7 @@ export interface ConfigPlay {
   packageName: string;
   /**
    * The tracks to watch, such as `[internal, production]`. A release published on `production` is a `release.live`
-   * event, on any other track a `testing.build.available` event.
+   * event, on any other track a `testing.build.available` event. The first poll only records the current state.
    */
   tracks: string[];
   /**
