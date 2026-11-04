@@ -51,7 +51,7 @@ export interface IngestEvent {
   labels?: Record<string, string>;
 }
 
-export interface StdHeaders {
+interface StdHeaders {
   id?: string;
   timestamp?: string;
   signature?: string;

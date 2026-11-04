@@ -6,7 +6,7 @@ import type { Message } from '../message.ts';
 import type { Router } from '../router.ts';
 import { fetchJson, pollEach, reviewMessage, signJwt, type StateEvent, type StateStore } from './shared.ts';
 
-export interface PlayRelease {
+interface PlayRelease {
   releaseName?: string;
   releaseLifecycleState?: string;
   activeArtifacts?: { versionCode?: string | number }[];
@@ -106,13 +106,13 @@ export async function pollPlay(cfg: Pick<Config, 'playApi' | 'apps'>, router: Ro
 // ---- Android vitals (optional: ConfigPlay.vitals)
 // https://developers.google.com/play/developer/reporting/reference/rest
 
-export interface Anomaly {
+interface Anomaly {
   name: string;
   metricSet: string; // apps/{app}/crashRateMetricSet
   dimensions?: { dimension: string; valueLabel?: string; stringValue?: string; int64Value?: string }[];
   metric?: { metric: string; decimalValue?: { value: string } };
 }
-export interface ErrorIssue {
+interface ErrorIssue {
   name: string;
   type: string; // CRASH, APPLICATION_NOT_RESPONDING
   cause?: string; // the exception or signal, or the kind of ANR
@@ -124,7 +124,7 @@ export interface ErrorIssue {
   lastAppVersion?: { versionCode?: string };
 }
 /** The anomaly and issue names seen */
-export type VitalsState = { anomalies: string[]; issues: string[] };
+type VitalsState = { anomalies: string[]; issues: string[] };
 
 // Issues drop out of the 24-hour search when they stop happening, so remember them longer than that, within reason.
 const ISSUES_KEPT = 500;
@@ -189,7 +189,7 @@ async function listVitals(api: PlayApi, pkg: string) {
 // ---- Reviews (optional: ConfigPlay.reviews)
 // https://developers.google.com/android-publisher/reply-to-reviews
 
-export interface PlayReview {
+interface PlayReview {
   reviewId: string;
   authorName?: string;
   comments?: { userComment?: { text?: string; lastModified?: { seconds?: string }; starRating?: number; appVersionName?: string; reviewerLanguage?: string } }[];

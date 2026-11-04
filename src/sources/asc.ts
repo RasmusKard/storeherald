@@ -6,7 +6,7 @@ import type { Message } from '../message.ts';
 import type { Router } from '../router.ts';
 import { fetchJson, platformName, pollEach, reviewMessage, safeEq, signJwt, type StateEvent, type StateStore } from './shared.ts';
 
-export interface AscEvent {
+interface AscEvent {
   data: {
     type: string;
     id: string;
@@ -15,7 +15,7 @@ export interface AscEvent {
   };
 }
 /** Filled in by an extra API call, because webhook payloads carry no version or app info. */
-export interface AscDetails {
+interface AscDetails {
   version?: string; // "1.4.2" or "1.4.2 (57)"
   platform?: string; // IOS, MAC_OS, ...
   appleAppId?: string;
@@ -201,7 +201,7 @@ async function ascDetails(e: AscEvent, api: AscApi | undefined): Promise<AscDeta
 
 // ---- Polled on the cron (optional: ConfigAsc.appId)
 
-export interface CustomerReview {
+interface CustomerReview {
   id: string;
   attributes: { rating: number; title?: string; body?: string; reviewerNickname?: string; territory?: string; createdDate: string };
 }
@@ -225,12 +225,12 @@ export function ascReviewsDiff(prev: number | undefined, r: { data: CustomerRevi
   return { next, messages };
 }
 
-export interface LiveVersions {
+interface LiveVersions {
   data: { id: string; attributes: { versionString: string; platform: string }; relationships?: { appStoreVersionPhasedRelease?: { data?: { id: string } | null } } }[];
   included?: { type: string; id: string; attributes: { phasedReleaseState: string; currentDayNumber?: number } }[];
 }
 /** appStoreVersion id -> `${phasedReleaseState}:${currentDayNumber}` */
-export type PhasedState = Record<string, string>;
+type PhasedState = Record<string, string>;
 
 const PHASED_PERCENT = [1, 2, 5, 10, 20, 50, 100]; // by day: Apple's fixed schedule
 
@@ -270,7 +270,7 @@ export function phasedDiff(prev: PhasedState | undefined, r: LiveVersions, app: 
   return { next, messages };
 }
 
-export interface UnresolvedSubmissions {
+interface UnresolvedSubmissions {
   data: { id: string; attributes: { platform?: string }; relationships?: { appStoreVersionForReview?: { data?: { id: string } | null } } }[];
   included?: { type: string; id: string; attributes: { versionString?: string; appVersionState?: string } }[];
 }
