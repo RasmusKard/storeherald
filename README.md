@@ -46,7 +46,7 @@ To upgrade, run `git fetch --tags`, check out the newest tag the same way, then 
    npx wrangler secret put EAS_WEBHOOK_SECRET
    ```
 
-3. If you neither use Google Play nor set `asc.appId`, remove `triggers` and `kv_namespaces` from [`wrangler.jsonc`](wrangler.jsonc). Otherwise set its cron schedule to how often to poll, at most every 2 minutes: a faster schedule can post a change twice.
+3. If you neither use Google Play nor set `asc.appId`, remove `triggers` and `kv_namespaces` from [`wrangler.jsonc`](wrangler.jsonc). Otherwise set its cron schedule to how often to poll, at most every 10 minutes: a slow run can overlap the next and post a change twice, and KV's free plan allows 1,000 writes a day.
 4. Deploy with `npx wrangler deploy`. It prints the Worker's URL.
 5. [Connect the sources](#sources).
 6. Logs are JSON lines in the Worker's logs. Alert on those with `"level":"error"` and point your uptime check at `GET /health_check`, which fails when the config does.
@@ -125,6 +125,7 @@ if (!res.ok) throw new Error(`ingest: ${res.status} ${await res.text()}`);
 
 - Google Play rejection reasons aren't in its API. They arrive by email.
 - If every target was down when an App Store Connect event arrived, resend it by hand from the webhook's delivery list in App Store Connect.
+- On the Workers Free plan, a cron run can make [50 subrequests](https://developers.cloudflare.com/workers/platform/limits/). It makes one per Play track and up to 6 more per app, one per message for each target, one for the Google token, and one to read each poller's state in KV and one to save it when it changed. Past the limit, requests fail and each run posts the same messages again.
 
 ## License
 
