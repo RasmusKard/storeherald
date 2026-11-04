@@ -59,17 +59,19 @@ export async function pollEach<S>(store: StateStore, key: string, router: Router
   } catch {
     return log('error', 'stored poller state is not JSON (fix or delete the key), skipping this poll', { key });
   }
+  const kept: Record<string, S> = {};
   for (const p of polls) {
+    if (state[p.id] !== undefined) kept[p.id] = state[p.id];
     try {
       const { next, messages } = await p.poll(state[p.id]);
-      if ((await router.deliver(messages)) === 'ok') state[p.id] = next;
+      if ((await router.deliver(messages)) === 'ok') kept[p.id] = next;
     } catch (err) {
       log('error', 'poll failed', { key, id: p.id, err: errText(err) });
     }
   }
-  const json = JSON.stringify(state);
+  const json = JSON.stringify(kept);
   // KV's free plan allows 1,000 writes a day: write only on a change.
-  if (json !== raw) await store.put(key, json).catch((err) => log('error', 'could not save poller state', { key, err: String(err) }));
+  if (json !== (raw ?? '{}')) await store.put(key, json).catch((err) => log('error', 'could not save poller state', { key, err: String(err) }));
 }
 
 /** A store review. Its severity follows the rating, so a route's `minSeverity: warning` keeps 1 and 2 stars only. */
