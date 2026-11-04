@@ -63,9 +63,11 @@ export function createRouter(cfg: Pick<Config, 'routes' | 'targets'>) {
     return outcome;
   }
 
-  /** 'retry' when some message reached no target: reply 5xx so the sender resends. */
+  /** 'retry' when some message reached no target: reply 5xx so the sender resends. One at a time: a burst trips webhook rate limits. */
   async function deliver(msgs: Message[]): Promise<Outcome> {
-    return (await Promise.all(msgs.map(deliverOne))).includes('retry') ? 'retry' : 'ok';
+    let outcome: Outcome = 'ok';
+    for (const m of msgs) if ((await deliverOne(m)) === 'retry') outcome = 'retry';
+    return outcome;
   }
 
   return { deliver };
