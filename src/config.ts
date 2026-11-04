@@ -1,5 +1,4 @@
-import { createPrivateKey } from 'node:crypto';
-import { signJwt } from './sources/shared.ts';
+import { sign } from 'node:crypto';
 import { parse } from 'yaml';
 import { SEVERITIES, type Severity } from './message.ts';
 import type { IngestEvent } from './sources/ingest.ts';
@@ -217,9 +216,10 @@ function inline(v: string, start: string, where: string): string {
   throw new Error(`config: ${where} must be inline, starting with ${start}`);
 }
 // node:crypto's error names no field, and must not be replaced by one that quotes the key.
-function checkKey(where: string, check: () => unknown) {
+// Signs rather than parses: workerd rejects a KeyObject with dsaEncoding, and only signing shows it.
+function checkKey(where: string, key: Parameters<typeof sign>[2]) {
   try {
-    check();
+    sign('sha256', Buffer.alloc(0), key);
   } catch {
     throw new Error(`config: ${where} is not a usable private key`);
   }
@@ -276,8 +276,7 @@ function parseApps(v: unknown): Map<string, AppConfig> {
 function parseAscApi(v: unknown): ConfigAscApi {
   const a = obj(v, 'ascApi', keysOf<ConfigAscApi>({ issuerId: true, keyId: true, privateKey: true }));
   const pem = inline(str(a, 'privateKey', 'ascApi'), '-----BEGIN', 'ascApi.privateKey');
-  // Signs rather than parses: workerd rejects the KeyObject form here, and only signing shows it.
-  checkKey('ascApi.privateKey', () => signJwt({}, {}, { key: pem, dsaEncoding: 'ieee-p1363' }));
+  checkKey('ascApi.privateKey', { key: pem, dsaEncoding: 'ieee-p1363' });
   return { issuerId: str(a, 'issuerId', 'ascApi'), keyId: str(a, 'keyId', 'ascApi'), privateKey: pem }; // PEM, not a KeyObject: workerd's sign() rejects a KeyObject with dsaEncoding
 }
 
@@ -291,7 +290,7 @@ function parsePlayApi(v: unknown): PlayApi {
     throw new Error('config: playApi.serviceAccount is not valid JSON'); // not err.message: it quotes the private key
   }
   if (typeof sa?.client_email !== 'string' || typeof sa.private_key !== 'string') throw new Error('config: playApi.serviceAccount is not a service-account key JSON');
-  checkKey('playApi.serviceAccount private_key', () => createPrivateKey(sa.private_key as string)); // fail at load, not on every poll
+  checkKey('playApi.serviceAccount private_key', sa.private_key); // fail at load, not on every poll
   return { serviceAccount: { client_email: sa.client_email, private_key: sa.private_key } };
 }
 
