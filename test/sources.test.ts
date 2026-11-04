@@ -136,3 +136,8 @@ void test('ingest: a valid event becomes a message, a javascript: link is reject
   assert.deepEqual(typeof m === 'object' && [m.type, m.title], ['update.published', 'OTA update published']);
   assert.match(ingestToMessage('x', { type: 'a.b', title: 't', links: [{ label: 'x', url: 'javascript:alert(1)' }] }) as string, /links/);
 });
+
+void test("ingest: link URLs are percent-encoded, so the targets' URL caps count what they send", () => {
+  const m = ingestToMessage('x', { type: 'a.b', title: 't', links: [{ label: 'x', url: ' https://expo.dev/a b€' }] });
+  assert.equal(typeof m === 'object' && m.links?.[0].url, 'https://expo.dev/a%20b%E2%82%AC');
+});
