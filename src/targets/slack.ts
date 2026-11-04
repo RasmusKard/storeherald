@@ -23,7 +23,7 @@ const mrkdwn = (text: string) => ({ type: 'mrkdwn', text, verbatim: true }); // 
 
 export const slack: Target<SlackConfig> = {
   keys: keysOf<Omit<SlackTarget, 'id' | 'type'>>({ url: true, mention: true }),
-  parseConfig: (raw) => ({ url: httpUrl(raw, 'url').href, mention: optStr(raw, 'mention') }),
+  parseConfig: (raw, w) => ({ url: httpUrl(raw, 'url', w).href, mention: optStr(raw, 'mention', w) }),
 
   render(m, cfg, d) {
     const { emoji, color } = SEVERITY[m.severity];

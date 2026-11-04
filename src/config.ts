@@ -3,7 +3,7 @@ import { signJwt } from './sources/shared.ts';
 import { parse } from 'yaml';
 import { SEVERITIES, type Message, type Severity } from './message.ts';
 import type { IngestEvent } from './sources/ingest.ts';
-import { keysOf, type Delivery, type Target } from './targets/shared.ts';
+import { keysOf, obj, optStr, str, type Delivery, type Obj, type Target } from './targets/shared.ts';
 import { slack, type SlackTarget } from './targets/slack.ts';
 import { discord, type DiscordTarget } from './targets/discord.ts';
 import { teams, type TeamsTarget } from './targets/teams.ts';
@@ -217,19 +217,6 @@ export interface Config {
   routes: Route[];
 }
 
-type Obj = Record<string, unknown>;
-
-function obj(v: unknown, where: string, allowed?: string[]): Obj {
-  if (!v || typeof v !== 'object' || Array.isArray(v)) throw new Error(`config: ${where} must be a mapping`);
-  // A typo like `minseverity` would otherwise silently disable a filter.
-  const unknown = allowed && Object.keys(v).filter((k) => !allowed.includes(k));
-  if (unknown?.length) throw new Error(`config: unknown key(s) in ${where}: ${unknown.join(', ')}`);
-  return v as Obj;
-}
-function str(o: Obj, k: string, where: string): string {
-  if (typeof o[k] !== 'string' || !o[k]) throw new Error(`config: ${where}.${k} must be a non-empty string`);
-  return o[k] as string;
-}
 function strList(o: Obj, k: string, where: string): string[] {
   const v = o[k];
   if (!Array.isArray(v) || !v.length || !v.every((x) => typeof x === 'string' && x)) throw new Error(`config: ${where}.${k} must be a non-empty list of strings`);
@@ -283,7 +270,7 @@ function parseApps(v: unknown): Map<string, AppConfig> {
       eas: eas && { secret: str(eas, 'secret', `${w}.eas`) },
       asc: asc && {
         secret: str(asc, 'secret', `${w}.asc`),
-        appId: asc.appId == null ? undefined : str(asc, 'appId', `${w}.asc`),
+        appId: optStr(asc, 'appId', `${w}.asc`),
         reviews: bool(asc, 'reviews', `${w}.asc`, DEFAULTS.ConfigAsc.reviews),
       },
       play: play && {
@@ -339,12 +326,7 @@ function parseTargets(v: unknown): Map<string, TargetInstance> {
     if (!target) throw new Error(`config: targets.${id}.type must be one of ${Object.keys(TARGET_TYPES).join(', ')}`);
     obj(raw, `targets.${id}`, ['id', 'type', ...target.keys]);
     if (targets.has(id)) throw new Error(`config: duplicate target id ${id}`);
-    let c: unknown;
-    try {
-      c = target.parseConfig(t);
-    } catch (err) {
-      throw new Error(`config: targets.${id}: ${(err as Error).message}`);
-    }
+    const c = target.parseConfig(t, `targets.${id}`);
     targets.set(id, { render: (m, d) => target.render(m, c, d), send: (payload) => target.send(payload, c) });
   }
   return targets;

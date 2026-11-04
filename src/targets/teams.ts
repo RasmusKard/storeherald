@@ -1,5 +1,5 @@
 import type { ConfigFile } from '../config.ts';
-import { SEVERITY, type Target, bodyOf, fieldsOf, httpUrl, keysOf, linksOf, postJson, truncate } from './shared.ts';
+import { SEVERITY, type Target, bodyOf, fieldsOf, httpUrl, keysOf, linksOf, obj, postJson, str, truncate } from './shared.ts';
 
 /**
  * A target in {@link ConfigFile.targets} that posts to a Teams channel through a Workflows webhook.
@@ -36,14 +36,12 @@ const rich = (text: string, style: Record<string, unknown> = {}) => ({ type: 'Ri
 
 export const teams: Target<TeamsConfig> = {
   keys: keysOf<Omit<TeamsTarget, 'id' | 'type'>>({ url: true, mention: true }),
-  parseConfig(raw) {
-    const url = httpUrl(raw, 'url');
+  parseConfig(raw, w) {
+    const url = httpUrl(raw, 'url', w);
     if (/\.(logic\.azure|webhook\.office)\.com$/.test(url.hostname)) // hostname: lower-cased, no :443
-      throw new Error('teams URL is a retired O365 connector / old Workflows host; create a new Workflows webhook');
-    const mention = raw.mention as Record<string, unknown> | undefined;
-    if (mention != null && (![mention.id, mention.name].every((v) => typeof v === 'string' && v) || Object.keys(mention).length !== 2))
-      throw new Error('teams "mention" needs non-empty string "id" and "name" and nothing else');
-    return { url: url.href, mention: mention as TeamsConfig['mention'] };
+      throw new Error(`config: ${w}.url is a retired O365 connector / old Workflows host; create a new Workflows webhook`);
+    const m = raw.mention == null ? undefined : obj(raw.mention, `${w}.mention`, keysOf<NonNullable<TeamsTarget['mention']>>({ id: true, name: true }));
+    return { url: url.href, mention: m && { id: str(m, 'id', `${w}.mention`), name: str(m, 'name', `${w}.mention`) } };
   },
 
   // Teams drops cards over 28 KB after replying 202, so we'd never know. These caps keep the worst case
