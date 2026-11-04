@@ -1,4 +1,4 @@
-import { loadConfig, type Config } from './config.ts';
+import { loadConfig, type Config, type ConfigIngest } from './config.ts';
 import { log } from './log.ts';
 import { createRouter, type Router } from './router.ts';
 import type { Message } from './message.ts';
@@ -42,10 +42,9 @@ function json(raw: Buffer): unknown {
 
 const header = (req: Request, name: string) => req.headers.get(name) ?? undefined;
 
-function ingest(cfg: Config, req: Request, raw: Buffer): Message[] {
-  if (!cfg.ingest) throw new HttpError(404, 'not found');
+function ingest(ing: ConfigIngest, req: Request, raw: Buffer): Message[] {
   const h = { id: header(req, 'webhook-id'), timestamp: header(req, 'webhook-timestamp'), signature: header(req, 'webhook-signature') };
-  if (!verifyIngest(raw, h, cfg.ingest.secret)) throw new HttpError(401, 'bad signature');
+  if (!verifyIngest(raw, h, ing.secret)) throw new HttpError(401, 'bad signature');
   const m = ingestToMessage(h.id!, json(raw));
   if (typeof m === 'string') throw new HttpError(400, m);
   return [m];
@@ -54,19 +53,20 @@ function ingest(cfg: Config, req: Request, raw: Buffer): Message[] {
 /** Verify the signature on the raw bytes before parsing. */
 async function handle(cfg: Config, req: Request, path: string[]): Promise<Message[]> {
   const [source, appId] = path;
-  const raw = await readBody(req);
-  if (source === 'ingest' && path.length === 1) return ingest(cfg, req, raw);
+  if (source === 'ingest' && path.length === 1 && cfg.ingest) return ingest(cfg.ingest, req, await readBody(req));
 
   const app = appId ? cfg.apps.get(appId) : undefined;
   if (path.length !== 2 || !app) throw new HttpError(404, 'not found');
 
   if (source === 'eas' && app.eas) {
+    const raw = await readBody(req);
     if (!verifyEas(raw, header(req, 'expo-signature'), app.eas.secret)) throw new HttpError(401, 'bad signature');
     const payload = json(raw);
     if (!isEasPayload(payload)) throw new HttpError(400, 'not an EAS build or submission webhook');
     return easToMessages(payload, app);
   }
   if (source === 'asc' && app.asc) {
+    const raw = await readBody(req);
     if (!verifyAsc(raw, header(req, 'x-apple-signature'), app.asc.secret)) throw new HttpError(401, 'bad signature');
     const event = json(raw);
     if (!isAscEvent(event)) throw new HttpError(400, 'not an App Store Connect event');
