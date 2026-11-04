@@ -26,7 +26,7 @@ export const platformName = (p: string) => PLATFORM[p.toLowerCase()] ?? p;
 export async function fetchJson(what: string, url: string, init: RequestInit = {}, timeoutMs = 10_000): Promise<any> {
   const res = await fetch(url, { ...init, signal: AbortSignal.timeout(timeoutMs) });
   if (!res.ok) throw new Error(`${what}: ${res.status} ${(await res.text()).slice(0, 300)}`);
-  return res.status === 204 ? undefined : res.json();
+  return res.json();
 }
 
 /** Where pollers keep what they have seen between cron runs: a KV namespace binding. */
