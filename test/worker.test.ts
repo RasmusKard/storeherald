@@ -14,11 +14,12 @@ import { ascKey, serviceAccount } from './keys.ts';
 
 const repo = (path: string) => fileURLToPath(new URL(`../${path}`, import.meta.url));
 
-void test('worker in workerd: health check, signed webhooks are delivered, bad signatures rejected', async (t) => {
+void test('worker in workerd: health check, signed webhooks delivered or retried, bad signatures and oversized bodies rejected', async (t) => {
   const posts: { text: string }[] = [];
   const slack = createServer(async (req, res) => {
     let body = '';
     for await (const c of req) body += c;
+    if (req.url === '/down') return res.writeHead(503, { 'retry-after': '0' }).end();
     posts.push(JSON.parse(body) as { text: string });
     res.end('ok');
   });
@@ -47,8 +48,10 @@ playApi: { serviceAccount: "\${PLAY_SA}" }
 ingest: { secret: "whsec_${ingestKey.toString('base64')}" }
 targets:
   - { id: releases, type: slack, url: "http://127.0.0.1:${(slack.address() as any).port}/hook" }
+  - { id: down, type: slack, url: "http://127.0.0.1:${(slack.address() as any).port}/down" }
 routes:
-  - { types: ["build.*", "update.published"], targets: [releases] }
+  - { types: ["build.succeeded", "update.published"], targets: [releases] }
+  - { types: ["build.failed"], targets: [down] }
 `,
     },
   });
@@ -56,13 +59,18 @@ routes:
   const base = `http://${worker.address}:${worker.port}`;
   const post = (path: string, body: string, headers: Record<string, string>) =>
     fetch(`${base}${path}`, { method: 'POST', body, headers }).then((r) => r.status);
+  const easSig = (body: string) => ({ 'expo-signature': 'sha1=' + createHmac('sha1', 'sixteen-chars-secret').update(body).digest('hex') });
 
   assert.equal((await fetch(`${base}/health_check`)).status, 200);
 
   const eas = JSON.stringify({ id: 'b1', buildDetailsPageUrl: 'https://expo.dev/b1', platform: 'ios', status: 'finished', metadata: { appVersion: '1.0.0' } });
   assert.equal(await post('/eas/myapp', eas, { 'expo-signature': 'sha1=bad' }), 401);
-  assert.equal(await post('/eas/myapp', eas, { 'expo-signature': 'sha1=' + createHmac('sha1', 'sixteen-chars-secret').update(eas).digest('hex') }), 200);
+  assert.equal(await post('/eas/myapp', eas, easSig(eas)), 200);
   assert.match(posts[0].text, /iOS build succeeded: My App 1\.0\.0/);
+  // Its only target is down, so EAS is asked to resend.
+  const failed = JSON.stringify({ id: 'b2', buildDetailsPageUrl: 'https://expo.dev/b2', platform: 'ios', status: 'errored', metadata: { appVersion: '1.0.0' } });
+  assert.equal(await post('/eas/myapp', failed, easSig(failed)), 503);
+  assert.equal(await post('/ingest', 'x'.repeat(1024 * 1024 + 1), {}), 413);
 
   // App Store Connect "Test" button: body undocumented, so assume the bare minimum and expect a quiet 200.
   const ping = JSON.stringify({ data: { type: 'webhookPingCreated', id: 'p1' } });
