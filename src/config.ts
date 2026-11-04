@@ -356,7 +356,7 @@ function parseRoutes(v: unknown, targets: Map<string, TargetInstance>): Route[] 
     const w = `routes[${i}]`;
     const r = obj(raw, w, keysOf<ConfigRoute>({ types: true, labels: true, minSeverity: true, targets: true, mention: true, silent: true }));
     const types = strList(r, 'types', w);
-    for (const t of types) if (t.indexOf('*') !== -1 && t.indexOf('*') !== t.length - 1) throw new Error(`config: ${w}.types: "*" is only allowed at the end ("${t}")`);
+    for (const t of types) if (t.slice(0, -1).includes('*')) throw new Error(`config: ${w}.types: "*" is only allowed at the end ("${t}")`);
     const ids = strList(r, 'targets', w);
     for (const id of ids) if (!targets.has(id)) throw new Error(`config: ${w}.targets: unknown target "${id}"`);
     const minSeverity = (r.minSeverity ?? DEFAULTS.ConfigRoute.minSeverity) as Severity;
