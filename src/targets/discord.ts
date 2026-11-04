@@ -11,7 +11,7 @@ export interface DiscordTarget {
   url: string;
   /** What routes with `mention` ping, such as `<@&roleId>`, `<@userId>` or `@here`. */
   mention?: string;
-  /** Posts into this thread or forum post. */
+  /** Posts into the thread or forum post with this id, the last number in its link. Quote it: `"1234567890123456789"`. */
   threadId?: string;
 }
 
@@ -39,6 +39,7 @@ export const discord: Target<DiscordConfig> = {
     url.searchParams.set('wait', 'true');
     url.searchParams.set('with_components', 'true');
     const threadId = optStr(raw, 'threadId');
+    if (threadId && !/^\d+$/.test(threadId)) throw new Error('"threadId" must be the thread\'s id: digits only');
     if (threadId) url.searchParams.set('thread_id', threadId);
     return { url: url.toString(), mention: optStr(raw, 'mention') };
   },
