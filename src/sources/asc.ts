@@ -25,6 +25,9 @@ export interface AscDetails {
 export const verifyAsc = (raw: Buffer, header: string | undefined, secret: string) =>
   !!header && safeEq(header, 'hmacsha256=' + createHmac('sha256', secret).update(raw).digest('hex'));
 
+const ascUrl = (appleAppId: string | undefined, page: string) => `https://appstoreconnect.apple.com/apps${appleAppId ? `/${appleAppId}/${page}` : ''}`;
+const ascBase = (app: AppConfig, platform: string) => ({ source: 'App Store Connect', labels: { app: app.id, platform: platform.toLowerCase() } });
+
 const REJECTED = ['REJECTED', 'METADATA_REJECTED', 'INVALID_BINARY'];
 // States a version can move to straight out of review when Apple accepts it (any release type: manual, automatic, scheduled).
 const APPROVED_FROM_REVIEW = ['ACCEPTED', 'PENDING_DEVELOPER_RELEASE', 'PENDING_APPLE_RELEASE', 'PROCESSING_FOR_DISTRIBUTION', 'READY_FOR_DISTRIBUTION'];
@@ -59,9 +62,8 @@ export function ascToMessages(e: AscEvent, app: AppConfig, d: AscDetails = {}): 
   const a = e.data.attributes ?? {}; // the undocumented test ping may have none, or null
   const platform = platformName(d.platform ?? 'IOS');
   const name = `${app.name}${d.version ? ` ${d.version}` : ''}`;
-  const appleAppId = d.appleAppId ?? app.asc?.appId;
-  const appUrl = appleAppId && `https://appstoreconnect.apple.com/apps/${appleAppId}`;
-  const base = { source: 'App Store Connect', time: a.timestamp, labels: { app: app.id, platform: platform.toLowerCase() } };
+  const url = (page: string) => ascUrl(d.appleAppId ?? app.asc?.appId, page);
+  const base = { ...ascBase(app, platform), time: a.timestamp };
 
   if (type === 'appStoreVersionAppVersionStateUpdated' && a.newValue) {
     return versionEvents(a.oldValue, a.newValue).map((ev) => ({
@@ -71,7 +73,7 @@ export function ascToMessages(e: AscEvent, app: AppConfig, d: AscDetails = {}): 
       severity: ev.severity,
       title: `${platform} ${ev.what}: ${name}`,
       body: ev.type === 'appreview.rejected' ? 'Apple does not expose the reason via the API: see the App Review message in App Store Connect.' : undefined,
-      links: [{ label: 'Open in App Store Connect', url: appUrl ? `${appUrl}/distribution` : 'https://appstoreconnect.apple.com/apps' }],
+      links: [{ label: 'Open in App Store Connect', url: url('distribution') }],
     }));
   }
   if (type === 'buildUploadStateUpdated' && (a.newState === 'COMPLETE' || a.newState === 'FAILED')) {
@@ -82,7 +84,7 @@ export function ascToMessages(e: AscEvent, app: AppConfig, d: AscDetails = {}): 
       type: ok ? 'testing.build.available' : 'build.processing_failed',
       severity: ok ? 'success' : 'error',
       title: ok ? `${platform} build processed, available in TestFlight: ${name}` : `${platform} build failed App Store Connect processing: ${name}`,
-      links: [{ label: 'Open TestFlight', url: appUrl ? `${appUrl}/testflight` : 'https://appstoreconnect.apple.com/apps' }],
+      links: [{ label: 'Open TestFlight', url: url('testflight') }],
     }];
   }
   const beta = type === 'buildBetaDetailExternalBuildStateUpdated' && a.newExternalBuildState ? BETA_REVIEW[a.newExternalBuildState] : undefined;
@@ -94,7 +96,7 @@ export function ascToMessages(e: AscEvent, app: AppConfig, d: AscDetails = {}): 
       severity: beta.severity,
       title: `${platform} build ${beta.what}: ${name}`,
       body: beta.type === 'betareview.rejected' ? 'Apple does not expose the reason via the API: see TestFlight in App Store Connect.' : undefined,
-      links: [{ label: 'Open TestFlight', url: appUrl ? `${appUrl}/testflight` : 'https://appstoreconnect.apple.com/apps' }],
+      links: [{ label: 'Open TestFlight', url: url('testflight') }],
     }];
   }
   const fb = FEEDBACK[type];
@@ -110,7 +112,7 @@ export function ascToMessages(e: AscEvent, app: AppConfig, d: AscDetails = {}): 
       actor: f.email,
       fields: [{ label: 'Device', value: f.device ?? '' }, { label: 'OS', value: f.os ?? '' }],
       links: [
-        { label: 'Open TestFlight', url: appUrl ? `${appUrl}/testflight` : 'https://appstoreconnect.apple.com/apps' },
+        { label: 'Open TestFlight', url: url('testflight') },
         ...(f.screenshots ?? []).map((url, i) => ({ label: `Screenshot ${i + 1}`, url })), // signed URLs that expire
       ],
     }];
@@ -259,11 +261,10 @@ export function phasedDiff(prev: PhasedState | undefined, r: LiveVersions, app: 
     messages.push({
       id: `asc:${v.id}:${state}`,
       type: ev.type,
-      source: 'App Store Connect',
+      ...ascBase(app, platform),
       severity: ev.severity,
       title: `${platform} ${ev.what}: ${app.name} ${v.attributes.versionString}`,
-      links: [{ label: 'Open in App Store Connect', url: `https://appstoreconnect.apple.com/apps/${app.asc!.appId}/distribution` }],
-      labels: { app: app.id, platform: platform.toLowerCase() },
+      links: [{ label: 'Open in App Store Connect', url: ascUrl(app.asc!.appId, 'distribution') }],
     });
   }
   return { next, messages };
@@ -289,12 +290,11 @@ export function unresolvedDiff(prev: string[] | undefined, r: UnresolvedSubmissi
     return [{
       id: `asc:submission:${s.id}`,
       type: 'appreview.unresolved',
-      source: 'App Store Connect',
+      ...ascBase(app, platform),
       severity: 'error',
       title: `${platform} App Review found unresolved issues: ${app.name}${v?.versionString ? ` ${v.versionString}` : ''}`,
       body: 'Apple does not expose the reason via the API: see the App Review message in App Store Connect.',
-      links: [{ label: 'Open in App Store Connect', url: `https://appstoreconnect.apple.com/apps/${app.asc!.appId}/distribution` }],
-      labels: { app: app.id, platform: platform.toLowerCase() },
+      links: [{ label: 'Open in App Store Connect', url: ascUrl(app.asc!.appId, 'distribution') }],
     }];
   });
   return { next, messages };
