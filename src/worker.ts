@@ -92,26 +92,24 @@ function init(env: Env) {
   return app;
 }
 
+const text = (body: string, status = 200) => new Response(body, { status, headers: { 'content-type': 'text/plain' } });
+
 export default {
   async fetch(req: Request, env: Env): Promise<Response> {
     const path = new URL(req.url).pathname.split('/').filter(Boolean);
-    let status = 200;
-    let text = 'ok';
     try {
       const { cfg, router } = init(env); // also on health checks, so a broken config fails them
-      if (req.method === 'POST') {
-        if ((await router.deliver(await handle(cfg, req, path))) === 'retry') [status, text] = [503, 'delivery failed, please retry'];
-      } else if (!(req.method === 'GET' && path.join('/') === 'health_check')) throw new HttpError(404, 'not found'); // not 405: keeps bot probes (GET /, /favicon.ico) out of the warn log
+      if (req.method === 'GET' && path.join('/') === 'health_check') return text('ok');
+      if (req.method !== 'POST') throw new HttpError(404, 'not found'); // not 405: keeps bot probes (GET /, /favicon.ico) out of the warn log
+      return (await router.deliver(await handle(cfg, req, path))) === 'retry' ? text('delivery failed, please retry', 503) : text('ok');
     } catch (err) {
-      if (err instanceof HttpError) {
-        [status, text] = [err.status, err.message];
-        if (status !== 404) log('warn', 'request rejected', { path: path[0], status, reason: text });
-      } else {
-        [status, text] = [500, 'internal error'];
+      if (!(err instanceof HttpError)) {
         log('error', 'request failed', { path: path[0], err: String(err) });
+        return text('internal error', 500);
       }
+      if (err.status !== 404) log('warn', 'request rejected', { path: path[0], status: err.status, reason: err.message });
+      return text(err.message, err.status);
     }
-    return new Response(text, { status, headers: { 'content-type': 'text/plain' } });
   },
 
   async scheduled(_controller: unknown, env: Env): Promise<void> {
