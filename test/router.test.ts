@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict';
-import { generateKeyPairSync } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import { parse } from 'yaml';
 import { interpolate, loadConfig, parseConfig, type TargetInstance } from '../src/config.ts';
 import type { Message } from '../src/message.ts';
 import { createRouter, plan } from '../src/router.ts';
+import { ascKey, serviceAccount } from './keys.ts';
 
 const msg = (over: Partial<Message> = {}): Message => ({
   id: 'm1', type: 'build.failed', source: 'EAS', severity: 'error', time: '2026-10-08T12:00:00Z', title: 'T', labels: { platform: 'ios' }, ...over,
@@ -24,13 +24,12 @@ const baseConfig = {
 };
 
 void test('config: config.example.yaml parses', () => {
-  const raw = parse(readFileSync('config.example.yaml', 'utf8'));
-  const pkcs8 = { type: 'pkcs8', format: 'pem' } as const;
+  const raw = parse(readFileSync(new URL('../config.example.yaml', import.meta.url), 'utf8'));
   const env = {
     ASC_ISSUER_ID: 'issuer',
     ASC_KEY_ID: 'key',
-    ASC_PRIVATE_KEY: generateKeyPairSync('ec', { namedCurve: 'P-256' }).privateKey.export(pkcs8),
-    PLAY_SERVICE_ACCOUNT: JSON.stringify({ client_email: 'poller@acme.iam', private_key: generateKeyPairSync('rsa', { modulusLength: 2048 }).privateKey.export(pkcs8) }),
+    ASC_PRIVATE_KEY: ascKey,
+    PLAY_SERVICE_ACCOUNT: JSON.stringify(serviceAccount),
     EAS_WEBHOOK_SECRET: 'sixteen-chars-secret',
     ASC_WEBHOOK_SECRET: 'asc-secret',
     INGEST_SECRET: 'whsec_' + Buffer.alloc(32, 7).toString('base64'),

@@ -1,14 +1,18 @@
 // End to end: run the Worker in local workerd with a config pointing a Slack target at a local fake, then post signed webhooks.
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { createHmac, generateKeyPairSync, randomBytes } from 'node:crypto';
+import { createHmac, randomBytes } from 'node:crypto';
 import { createServer } from 'node:http';
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
+import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { unstable_dev } from 'wrangler';
+import { ascKey, serviceAccount } from './keys.ts';
+
+const repo = (path: string) => fileURLToPath(new URL(`../${path}`, import.meta.url));
 
 void test('worker in workerd: health check, signed webhooks are delivered, bad signatures rejected', async (t) => {
   const posts: { text: string }[] = [];
@@ -23,16 +27,15 @@ void test('worker in workerd: health check, signed webhooks are delivered, bad s
 
   const dir = mkdtempSync(join(tmpdir(), 'ews-'));
   const ingestKey = randomBytes(32);
-  const pkcs8 = { type: 'pkcs8', format: 'pem' } as const;
-  const worker = await unstable_dev('src/worker.ts', {
-    config: 'wrangler.jsonc',
+  const worker = await unstable_dev(repo('src/worker.ts'), {
+    config: repo('wrangler.jsonc'),
     logLevel: 'none',
     experimental: { disableExperimentalWarning: true },
     vars: {
       EAS_SECRET: 'sixteen-chars-secret',
       // Config loading checks both keys, the ASC one by signing, so the health check below fails if workerd can't sign with it.
-      ASC_KEY: generateKeyPairSync('ec', { namedCurve: 'P-256' }).privateKey.export(pkcs8),
-      PLAY_SA: JSON.stringify({ client_email: 'poller@acme.iam', private_key: generateKeyPairSync('rsa', { modulusLength: 2048 }).privateKey.export(pkcs8) }),
+      ASC_KEY: ascKey,
+      PLAY_SA: JSON.stringify(serviceAccount),
       STOREHERALD_CONFIG: `
 apps:
   myapp:
@@ -67,7 +70,7 @@ routes:
   assert.equal(posts.length, 1);
 
   // The post-event.mjs example from README.md, verbatim. Async: a sync spawn would block the fake Slack above.
-  const example = readFileSync('README.md', 'utf8').match(/```js\n(\/\/ post-event\.mjs:[\s\S]*?)```/)![1];
+  const example = readFileSync(repo('README.md'), 'utf8').match(/```js\n(\/\/ post-event\.mjs:[\s\S]*?)```/)![1];
   writeFileSync(join(dir, 'post-event.mjs'), example);
   const update = JSON.stringify({ type: 'update.published', title: 'OTA update published' });
   await promisify(execFile)(process.execPath, [join(dir, 'post-event.mjs'), update], {
