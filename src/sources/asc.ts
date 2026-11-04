@@ -207,8 +207,8 @@ export interface CustomerReview {
 }
 
 /** Reviews newer than `prev`, the latest `createdDate` seen (epoch ms). `prev === undefined` (first poll) records a baseline. */
-export function ascReviewsDiff(prev: number | undefined, reviews: CustomerReview[], app: AppConfig) {
-  const items = reviews.map((r) => ({ r: r.attributes, id: r.id, t: Date.parse(r.attributes.createdDate) || 0 })); // has a UTC offset: compare as numbers
+export function ascReviewsDiff(prev: number | undefined, r: { data: CustomerReview[] }, app: AppConfig) {
+  const items = r.data.map((r) => ({ r: r.attributes, id: r.id, t: Date.parse(r.attributes.createdDate) || 0 })); // has a UTC offset: compare as numbers
   const next = Math.max(prev ?? 0, ...items.map((x) => x.t));
   if (prev === undefined) return { next, messages: [] };
   const messages = items.filter((x) => x.t > prev).map(({ r, id, t }) => reviewMessage(app, {
@@ -307,27 +307,14 @@ export async function pollAsc(cfg: Pick<Config, 'ascApi' | 'apps'>, router: Rout
   if (!api || !apps.length) return;
   if (!store) return log('error', 'no STATE KV binding: App Store Connect is not polled');
 
-  await pollEach<PhasedState>(store, 'asc-phased', router, apps.map((app) => ({
-    id: app.asc!.appId!,
-    poll: async (prev) => {
-      const path = `/v1/apps/${encodeURIComponent(app.asc!.appId!)}/appStoreVersions?filter[appVersionState]=READY_FOR_DISTRIBUTION&include=appStoreVersionPhasedRelease`
-        + '&fields[appStoreVersions]=versionString,platform,appStoreVersionPhasedRelease&fields[appStoreVersionPhasedReleases]=phasedReleaseState,currentDayNumber';
-      return phasedDiff(prev, (await ascFetch(api, path, 15_000)) as LiveVersions, app);
-    },
-  })));
-  await pollEach<string[]>(store, 'asc-submissions', router, apps.map((app) => ({
-    id: app.asc!.appId!,
-    poll: async (prev) => {
-      const path = `/v1/apps/${encodeURIComponent(app.asc!.appId!)}/reviewSubmissions?filter[state]=UNRESOLVED_ISSUES&include=appStoreVersionForReview`
-        + '&fields[reviewSubmissions]=platform,appStoreVersionForReview&fields[appStoreVersions]=versionString,appVersionState';
-      return unresolvedDiff(prev, (await ascFetch(api, path, 15_000)) as UnresolvedSubmissions, app);
-    },
-  })));
-  await pollEach<number>(store, 'asc-reviews', router, apps.filter((a) => a.asc!.reviews).map((app) => ({
-    id: app.asc!.appId!,
-    poll: async (prev) => {
-      const path = `/v1/apps/${encodeURIComponent(app.asc!.appId!)}/customerReviews?sort=-createdDate&limit=100&fields[customerReviews]=rating,title,body,reviewerNickname,territory,createdDate`;
-      return ascReviewsDiff(prev, ((await ascFetch(api, path, 15_000)) as { data: CustomerReview[] }).data, app);
-    },
-  })));
+  const each = <S>(key: string, list: AppConfig[], path: string, diff: (prev: S | undefined, r: any, app: AppConfig) => { next: S; messages: Message[] }) =>
+    pollEach<S>(store, key, router, list.map((app) => ({
+      id: app.asc!.appId!,
+      poll: async (prev) => diff(prev, await ascFetch(api, `/v1/apps/${encodeURIComponent(app.asc!.appId!)}/${path}`, 15_000), app),
+    })));
+  await each('asc-phased', apps, 'appStoreVersions?filter[appVersionState]=READY_FOR_DISTRIBUTION&include=appStoreVersionPhasedRelease'
+    + '&fields[appStoreVersions]=versionString,platform,appStoreVersionPhasedRelease&fields[appStoreVersionPhasedReleases]=phasedReleaseState,currentDayNumber', phasedDiff);
+  await each('asc-submissions', apps, 'reviewSubmissions?filter[state]=UNRESOLVED_ISSUES&include=appStoreVersionForReview'
+    + '&fields[reviewSubmissions]=platform,appStoreVersionForReview&fields[appStoreVersions]=versionString,appVersionState', unresolvedDiff);
+  await each('asc-reviews', apps.filter((a) => a.asc!.reviews), 'customerReviews?sort=-createdDate&limit=100&fields[customerReviews]=rating,title,body,reviewerNickname,territory,createdDate', ascReviewsDiff);
 }

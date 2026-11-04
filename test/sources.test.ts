@@ -96,10 +96,10 @@ void test('Play: first poll is a baseline, then a state change notifies', () => 
 void test('reviews: the first poll is a baseline, then newer reviews notify with severity by rating', () => {
   const asc = { ...app, asc: { secret: 's', appId: '123', reviews: true } };
   const review = (id: string, createdDate: string, rating: number) => ({ id, attributes: { rating, title: 'Crashes', body: 'On login', createdDate } });
-  const first = ascReviewsDiff(undefined, [review('r1', '2025-05-01T10:00:00-07:00', 5)], asc);
+  const first = ascReviewsDiff(undefined, { data: [review('r1', '2025-05-01T10:00:00-07:00', 5)] }, asc);
   assert.equal(first.messages.length, 0);
   // Later than r1 once the offsets are applied, though it sorts earlier as text.
-  const second = ascReviewsDiff(first.next, [review('r2', '2025-05-01T18:30:00+01:00', 1), review('r1', '2025-05-01T10:00:00-07:00', 5)], asc);
+  const second = ascReviewsDiff(first.next, { data: [review('r2', '2025-05-01T18:30:00+01:00', 1), review('r1', '2025-05-01T10:00:00-07:00', 5)] }, asc);
   assert.deepEqual(second.messages.map((m) => [m.title, m.severity, m.body]), [['★☆☆☆☆ App Store review: My App', 'warning', 'Crashes\nOn login']]);
 
   const play = { ...app, play: { packageName: 'com.acme.myapp', tracks: ['production'], reviews: true } };
