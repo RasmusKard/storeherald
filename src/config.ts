@@ -199,18 +199,12 @@ export interface TargetInstance {
   render(msg: Message, d: Delivery): unknown;
   send(payload: unknown): Promise<void>;
 }
-export interface AscApi {
-  issuerId: string;
-  keyId: string;
-  /** PEM, not a KeyObject: workerd's sign() rejects a KeyObject with dsaEncoding. */
-  privateKey: string;
-}
 export interface PlayApi {
   serviceAccount: { client_email: string; private_key: string };
 }
 export interface Config {
   apps: Map<string, AppConfig>;
-  ascApi?: AscApi;
+  ascApi?: ConfigAscApi;
   playApi?: PlayApi;
   ingest?: ConfigIngest;
   targets: Map<string, TargetInstance>;
@@ -284,12 +278,12 @@ function parseApps(v: unknown): Map<string, AppConfig> {
   return apps;
 }
 
-function parseAscApi(v: unknown): AscApi {
+function parseAscApi(v: unknown): ConfigAscApi {
   const a = obj(v, 'ascApi', keysOf<ConfigAscApi>({ issuerId: true, keyId: true, privateKey: true }));
   const pem = inline(str(a, 'privateKey', 'ascApi'), '-----BEGIN', 'ascApi.privateKey');
   // Signs rather than parses: workerd rejects the KeyObject form here, and only signing shows it.
   checkKey('ascApi.privateKey', () => signJwt({}, {}, { key: pem, dsaEncoding: 'ieee-p1363' }));
-  return { issuerId: str(a, 'issuerId', 'ascApi'), keyId: str(a, 'keyId', 'ascApi'), privateKey: pem };
+  return { issuerId: str(a, 'issuerId', 'ascApi'), keyId: str(a, 'keyId', 'ascApi'), privateKey: pem }; // PEM, not a KeyObject: workerd's sign() rejects a KeyObject with dsaEncoding
 }
 
 function parsePlayApi(v: unknown): PlayApi {
