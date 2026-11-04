@@ -1,5 +1,5 @@
 import type { ConfigFile } from '../config.ts';
-import { SEVERITY, type Target, bodyOf, fieldsOf, httpUrl, keysOf, linksOf, optStr, postJson, truncate } from './shared.ts';
+import { SEVERITY, type Target, bodyOf, fieldsOf, httpUrl, keysOf, linksOf, optStr, truncate } from './shared.ts';
 
 /** A target in {@link ConfigFile.targets} that posts to a Discord webhook. Its name and avatar are set on the webhook in Discord. */
 export interface DiscordTarget {
@@ -70,6 +70,4 @@ export const discord: Target<DiscordConfig> = {
         : undefined,
     };
   },
-
-  send: (payload, cfg) => postJson(cfg.url, payload),
 };

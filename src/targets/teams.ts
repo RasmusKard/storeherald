@@ -1,5 +1,5 @@
 import type { ConfigFile } from '../config.ts';
-import { SEVERITY, type Target, bodyOf, fieldsOf, httpUrl, keysOf, linksOf, obj, postJson, str, truncate } from './shared.ts';
+import { SEVERITY, type Target, bodyOf, fieldsOf, httpUrl, keysOf, linksOf, obj, str, truncate } from './shared.ts';
 
 /**
  * A target in {@link ConfigFile.targets} that posts to a Teams channel through a Workflows webhook.
@@ -97,6 +97,4 @@ export const teams: Target<TeamsConfig> = {
       ],
     };
   },
-
-  send: (payload, cfg) => postJson(cfg.url, payload),
 };

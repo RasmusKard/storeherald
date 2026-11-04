@@ -1,15 +1,15 @@
 import { createPrivateKey } from 'node:crypto';
 import { signJwt } from './sources/shared.ts';
 import { parse } from 'yaml';
-import { SEVERITIES, type Message, type Severity } from './message.ts';
+import { SEVERITIES, type Severity } from './message.ts';
 import type { IngestEvent } from './sources/ingest.ts';
-import { keysOf, obj, optStr, str, type Delivery, type Obj, type Target } from './targets/shared.ts';
+import { keysOf, obj, optStr, postJson, str, type Obj, type Target, type TargetInstance } from './targets/shared.ts';
 import { slack, type SlackTarget } from './targets/slack.ts';
 import { discord, type DiscordTarget } from './targets/discord.ts';
 import { teams, type TeamsTarget } from './targets/teams.ts';
 import { DEFAULTS } from './config.defaults.ts';
 
-const TARGET_TYPES: Record<string, Target<any>> = { slack, discord, teams };
+const TARGET_TYPES: Record<string, Target<{ url: string }>> = { slack, discord, teams };
 
 /**
  * The config: YAML in the Worker's `STOREHERALD_CONFIG` variable, read on the first request or cron run. An unknown key
@@ -194,11 +194,6 @@ export interface AppConfig extends ConfigApp {
   id: string; // its key in ConfigFile.apps
 }
 export type Route = Required<ConfigRoute>;
-/** A target bound to its parsed config. */
-export interface TargetInstance {
-  render(msg: Message, d: Delivery): unknown;
-  send(payload: unknown): Promise<void>;
-}
 export interface PlayApi {
   serviceAccount: { client_email: string; private_key: string };
 }
@@ -321,7 +316,7 @@ function parseTargets(v: unknown): Map<string, TargetInstance> {
     obj(raw, `targets.${id}`, ['id', 'type', ...target.keys]);
     if (targets.has(id)) throw new Error(`config: duplicate target id ${id}`);
     const c = target.parseConfig(t, `targets.${id}`);
-    targets.set(id, { render: (m, d) => target.render(m, c, d), send: (payload) => target.send(payload, c) });
+    targets.set(id, { render: (m, d) => target.render(m, c, d), send: (payload) => postJson(c.url, payload) });
   }
   return targets;
 }

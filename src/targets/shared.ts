@@ -6,14 +6,20 @@ export interface Delivery {
   silent: boolean;
 }
 
-export interface Target<C> {
+/** A target type. What it renders is posted to its config's url. */
+export interface Target<C extends { url: string }> {
   /** Config keys besides id and type. */
   keys: string[];
   /** Validate and normalize raw config once at startup. Throws on bad config. */
   parseConfig(raw: Obj, where: string): C;
   /** Pure: Message -> platform JSON. No I/O, so it's testable on its own. */
   render(msg: Message, cfg: C, d: Delivery): unknown;
-  send(payload: unknown, cfg: C): Promise<void>;
+}
+
+/** A target bound to its parsed config. */
+export interface TargetInstance {
+  render(msg: Message, d: Delivery): unknown;
+  send(payload: unknown): Promise<void>;
 }
 
 /** T's keys, from a literal that must name each of them once: a parser's key list can't drift from the documented type. */
