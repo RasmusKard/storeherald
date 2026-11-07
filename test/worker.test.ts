@@ -11,6 +11,7 @@ import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { unstable_dev } from 'wrangler';
+import worker from '../src/worker.ts';
 import { ascKey, serviceAccount } from './keys.ts';
 
 const repo = (path: string) => fileURLToPath(new URL(`../${path}`, import.meta.url));
@@ -86,4 +87,12 @@ routes:
     env: { ...process.env, INGEST_URL: `${base}/ingest`, INGEST_SECRET: `whsec_${ingestKey.toString('base64')}` },
   });
   assert.match(posts[1].text, /OTA update published/);
+});
+
+void test('worker: a POST to an unknown path, or to /ingest without ingest, is a 404 that leaves the body unread', async () => {
+  const env = { STOREHERALD_CONFIG: 'apps: { myapp: { name: My App } }\ntargets: [{ id: a, type: slack, url: "https://hooks.slack.com/services/x" }]\nroutes: [{ types: ["*"], targets: [a] }]\n' };
+  for (const path of ['/nope', '/ingest', '/eas/myapp']) {
+    const req = new Request(`http://storeherald${path}`, { method: 'POST', body: '{}' });
+    assert.deepEqual([path, (await worker.fetch(req, env)).status, req.bodyUsed], [path, 404, false]);
+  }
 });
