@@ -1,6 +1,6 @@
 // App Store Connect API webhooks: https://developer.apple.com/documentation/appstoreconnectapi/webhook-events
 import { createHmac } from 'node:crypto';
-import type { AppConfig, AscApi, Config } from '../config.ts';
+import type { AppConfig, Config, ConfigAscApi } from '../config.ts';
 import { errText, log } from '../log.ts';
 import type { Message } from '../message.ts';
 import type { Router } from '../router.ts';
@@ -123,7 +123,7 @@ export function ascToMessages(e: AscEvent, app: AppConfig, d: AscDetails = {}): 
 export const isAscEvent = (e: any): e is AscEvent => typeof e?.data?.type === 'string' && typeof e.data.id === 'string';
 
 /** The messages for a verified event, looked up with `api` only when the event isn't ignored. */
-export async function ascMessages(e: AscEvent, app: AppConfig, api: AscApi | undefined): Promise<Message[]> {
+export async function ascMessages(e: AscEvent, app: AppConfig, api: ConfigAscApi | undefined): Promise<Message[]> {
   // First pass without details: ignored events must not cost an App Store Connect API call.
   if (!ascToMessages(e, app).length) {
     log('info', 'ASC event ignored', { app: app.id, type: e.data.type, newValue: e.data.attributes?.newValue ?? e.data.attributes?.newState });
@@ -137,7 +137,7 @@ export async function ascMessages(e: AscEvent, app: AppConfig, api: AscApi | und
 let token: { value: string; until: number } | undefined;
 
 /** ES256 JWT for a team API key: valid 19 min (Apple allows 20), reused for 15. */
-function jwt(api: AscApi): string {
+function jwt(api: ConfigAscApi): string {
   const now = Math.floor(Date.now() / 1000);
   if (token && token.until > now) return token.value;
   const claims = { iss: api.issuerId, iat: now, exp: now + 1140, aud: 'appstoreconnect-v1' };
@@ -147,7 +147,7 @@ function jwt(api: AscApi): string {
 }
 
 // Short by default: the webhook reply waits on it.
-const ascFetch = (api: AscApi, path: string, timeoutMs = 3000) =>
+const ascFetch = (api: ConfigAscApi, path: string, timeoutMs = 3000) =>
   fetchJson(`ASC API ${path.split('?')[0]}`, `https://api.appstoreconnect.apple.com${path}`,
     { headers: { authorization: `Bearer ${jwt(api)}`, 'content-type': 'application/json' } }, timeoutMs);
 
@@ -164,14 +164,14 @@ interface FeedbackResponse {
   };
 }
 
-async function buildDetails(api: AscApi, buildId: string): Promise<AscDetails> {
+async function buildDetails(api: ConfigAscApi, buildId: string): Promise<AscDetails> {
   const r = (await ascFetch(api, `/v1/builds/${encodeURIComponent(buildId)}?include=preReleaseVersion,app&fields[builds]=version,preReleaseVersion,app&fields[preReleaseVersions]=version,platform&fields[apps]=bundleId`)) as BuildResponse;
   const pre = r.included?.find((x) => x.type === 'preReleaseVersions')?.attributes;
   const build = r.data.attributes.version;
   return { version: pre ? `${pre.version} (${build})` : build, platform: pre?.platform, appleAppId: r.data.relationships?.app?.data?.id };
 }
 
-async function ascDetails(e: AscEvent, api: AscApi | undefined): Promise<AscDetails> {
+async function ascDetails(e: AscEvent, api: ConfigAscApi | undefined): Promise<AscDetails> {
   const inst = e.data.relationships?.instance?.data;
   if (!api || !inst) return {};
   try {

@@ -6,14 +6,20 @@ export interface Delivery {
   silent: boolean;
 }
 
-export interface Target<C> {
+/** A target type. What it renders is posted to its config's url. */
+export interface Target<C extends { url: string }> {
   /** Config keys besides id and type. */
   keys: string[];
   /** Validate and normalize raw config once at startup. Throws on bad config. */
-  parseConfig(raw: Record<string, unknown>): C;
+  parseConfig(raw: Obj, where: string): C;
   /** Pure: Message -> platform JSON. No I/O, so it's testable on its own. */
   render(msg: Message, cfg: C, d: Delivery): unknown;
-  send(payload: unknown, cfg: C): Promise<void>;
+}
+
+/** A target bound to its parsed config. */
+export interface TargetInstance {
+  render(msg: Message, d: Delivery): unknown;
+  send(payload: unknown): Promise<void>;
 }
 
 /** T's keys, from a literal that must name each of them once: a parser's key list can't drift from the documented type. */
@@ -85,16 +91,24 @@ export async function postJson(url: string, body: unknown): Promise<void> {
   }
 }
 
-function str(raw: Record<string, unknown>, key: string): string {
-  const v = raw[key];
-  if (typeof v !== 'string' || !v) throw new Error(`"${key}" must be a non-empty string`);
-  return v;
+export type Obj = Record<string, unknown>;
+
+export function obj(v: unknown, where: string, allowed?: string[]): Obj {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) throw new Error(`config: ${where} must be a mapping`);
+  // A typo like `minseverity` would otherwise silently disable a filter.
+  const unknown = allowed && Object.keys(v).filter((k) => !allowed.includes(k));
+  if (unknown?.length) throw new Error(`config: unknown key(s) in ${where}: ${unknown.join(', ')}`);
+  return v as Obj;
 }
+export function str(o: Obj, k: string, where: string): string {
+  if (typeof o[k] !== 'string' || !o[k]) throw new Error(`config: ${where}.${k} must be a non-empty string`);
+  return o[k] as string;
+}
+export const optStr = (o: Obj, k: string, where: string) => (o[k] == null ? undefined : str(o, k, where));
 /** An http(s) URL, checked at startup. Errors never echo the value: webhook URLs are secrets. */
-export function httpUrl(raw: Record<string, unknown>, key: string): URL {
-  const v = str(raw, key);
+export function httpUrl(o: Obj, k: string, where: string): URL {
+  const v = str(o, k, where);
   const url = URL.canParse(v) ? new URL(v) : undefined;
-  if (!url || (url.protocol !== 'https:' && url.protocol !== 'http:')) throw new Error(`"${key}" must be an http(s) URL`);
+  if (!url || (url.protocol !== 'https:' && url.protocol !== 'http:')) throw new Error(`config: ${where}.${k} must be an http(s) URL`);
   return url;
 }
-export const optStr = (raw: Record<string, unknown>, key: string) => (raw[key] == null ? undefined : str(raw, key));

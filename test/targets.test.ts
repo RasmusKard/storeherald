@@ -24,24 +24,25 @@ const worst: Message = {
 };
 const plain = { mention: false, silent: false };
 const json = (p: unknown) => JSON.stringify(p);
+type SlackPayload = { text: string; attachments: { blocks: { text: { text: string } }[] }[] };
 
 void test('slack: renders within block limits, no injected mentions', () => {
-  const p = slack.render(worst, slack.parseConfig({ url: 'https://hooks.slack.com/services/x' }), plain) as any;
+  const p = slack.render(worst, slack.parseConfig({ url: 'https://hooks.slack.com/services/x' }, 't'), plain) as SlackPayload;
   assert.ok(p.text.includes('<https://expo.dev/0|'));
   assert.ok(p.attachments[0].blocks[0].text.text.length <= 3000);
   assert.ok(!json(p).includes('<!channel>'));
 });
 
 void test('slack: a cut title never ends in half an escape', () => {
-  const cfg = slack.parseConfig({ url: 'https://hooks.slack.com/services/x' });
+  const cfg = slack.parseConfig({ url: 'https://hooks.slack.com/services/x' }, 't');
   for (let n = 294; n < 300; n++) {
-    const p = slack.render({ ...worst, title: 'a'.repeat(n) + '<b', links: [] }, cfg, plain) as any;
+    const p = slack.render({ ...worst, title: 'a'.repeat(n) + '<b', links: [] }, cfg, plain) as SlackPayload;
     assert.doesNotMatch(p.text, /&\w*…/);
   }
 });
 
 void test('discord: renders within the 6000-char embed total, no pings', () => {
-  const cfg = discord.parseConfig({ url: 'https://discord.com/api/webhooks/1/abc' });
+  const cfg = discord.parseConfig({ url: 'https://discord.com/api/webhooks/1/abc' }, 't');
   assert.equal(cfg.url, 'https://discord.com/api/v10/webhooks/1/abc?wait=true&with_components=true');
   const e = (discord.render(worst, cfg, plain) as any).embeds[0];
   const total = [e.title, e.description, e.author.name, e.footer.text, ...e.fields.flatMap((f: any) => [f.name, f.value])].join('').length;
@@ -50,7 +51,7 @@ void test('discord: renders within the 6000-char embed total, no pings', () => {
 });
 
 void test('teams: renders an Adaptive Card under 28 KB with the mention', () => {
-  const cfg = teams.parseConfig({ url: 'https://x.environment.api.powerplatform.com/y', mention: { id: 'a@b.c', name: 'Release crew' } });
+  const cfg = teams.parseConfig({ url: 'https://x.environment.api.powerplatform.com/y', mention: { id: 'a@b.c', name: 'Release crew' } }, 't');
   const p = teams.render(worst, cfg, { mention: true, silent: false }) as any;
   assert.ok(Buffer.byteLength(json(p)) <= 28_000, `${Buffer.byteLength(json(p))} bytes`);
   assert.equal(p.attachments[0].content.type, 'AdaptiveCard');
@@ -59,13 +60,13 @@ void test('teams: renders an Adaptive Card under 28 KB with the mention', () => 
 
 void test("discord: threadId must be the thread's id", () => {
   const url = 'https://discord.com/api/webhooks/1/abc';
-  assert.match(discord.parseConfig({ url, threadId: '123' }).url, /[?&]thread_id=123(&|$)/);
-  for (const threadId of [' 123', 'https://discord.com/channels/1/2/3']) assert.throws(() => discord.parseConfig({ url, threadId }), /threadId/);
+  assert.match(discord.parseConfig({ url, threadId: '123' }, 't').url, /[?&]thread_id=123(&|$)/);
+  for (const threadId of [' 123', 'https://discord.com/channels/1/2/3']) assert.throws(() => discord.parseConfig({ url, threadId }, 't'), /threadId/);
 });
 
 void test('teams: a mention needs a non-empty id and name', () => {
   const url = 'https://x.environment.api.powerplatform.com/y';
-  for (const mention of [{ id: '', name: 'Alex' }, { id: 'a@b.c', name: '' }]) assert.throws(() => teams.parseConfig({ url, mention }), /mention/);
+  for (const mention of [{ id: '', name: 'Alex' }, { id: 'a@b.c', name: '' }]) assert.throws(() => teams.parseConfig({ url, mention }, 't'), /mention/);
 });
 
 void test('postJson: retries a 5xx', async () => {
