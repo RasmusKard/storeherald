@@ -1,0 +1,21 @@
+name: PR title
+
+# Squash merges make the PR title the commit subject, and release-please skips a subject that isn't a Conventional Commit.
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+permissions: {}
+
+jobs:
+  conventional:
+    runs-on: ubuntu-latest
+    steps:
+      # Through env, not ${{ }} in the script: the title is untrusted text.
+      - env:
+          TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          if ! grep -Eq '^(build|chore|ci|docs|feat|fix|perf|refactor|revert|style|test)(\([^)]+\))?!?: .+' <<< "$TITLE"; then
+            echo "::error::Start the PR title with a Conventional Commit type, such as 'fix: ' or 'feat(asc)!: '"
+            exit 1
+          fi
