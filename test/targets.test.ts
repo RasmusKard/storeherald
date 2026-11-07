@@ -49,6 +49,11 @@ void test('teams: renders an Adaptive Card under 28 KB with the mention', () => 
   assert.equal(p.attachments[0].content.msteams.entities[0].text, '<at>Release crew</at>');
 });
 
+void test('teams: a mention needs a non-empty id and name', () => {
+  const url = 'https://x.environment.api.powerplatform.com/y';
+  for (const mention of [{ id: '', name: 'Alex' }, { id: 'a@b.c', name: '' }]) assert.throws(() => teams.parseConfig({ url, mention }), /mention/);
+});
+
 void test('postJson: retries a 5xx', async () => {
   const statuses = [503, 200];
   let calls = 0;
