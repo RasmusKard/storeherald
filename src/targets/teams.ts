@@ -41,8 +41,8 @@ export const teams: Target<TeamsConfig> = {
     if (/\.(logic\.azure|webhook\.office)\.com$/.test(url.hostname)) // hostname: lower-cased, no :443
       throw new Error('teams URL is a retired O365 connector / old Workflows host; create a new Workflows webhook');
     const mention = raw.mention as Record<string, unknown> | undefined;
-    if (mention != null && (typeof mention.id !== 'string' || typeof mention.name !== 'string' || Object.keys(mention).length !== 2))
-      throw new Error('teams "mention" needs string "id" and "name" and nothing else');
+    if (mention != null && (![mention.id, mention.name].every((v) => typeof v === 'string' && v) || Object.keys(mention).length !== 2))
+      throw new Error('teams "mention" needs non-empty string "id" and "name" and nothing else');
     return { url: url.href, mention: mention as TeamsConfig['mention'] };
   },
 
