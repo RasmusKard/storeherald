@@ -1,5 +1,5 @@
 import type { ConfigFile } from '../config.ts';
-import { SEVERITY, type Target, bodyOf, fieldsOf, httpUrl, keysOf, linksOf, optStr, postJson, truncate } from './shared.ts';
+import { SEVERITY, type Target, bodyOf, fieldsOf, httpUrl, keysOf, linksOf, optStr, truncate } from './shared.ts';
 
 /** A target in {@link ConfigFile.targets} that posts to a Discord webhook. Its name and avatar are set on the webhook in Discord. */
 export interface DiscordTarget {
@@ -31,17 +31,17 @@ const clip = (s: string, max: number) => truncate(esc(s), max);
 
 export const discord: Target<DiscordConfig> = {
   keys: keysOf<Omit<DiscordTarget, 'id' | 'type'>>({ url: true, mention: true, threadId: true }),
-  parseConfig(raw) {
+  parseConfig(raw, w) {
     // URLs from the Discord UI carry no version, so they hit deprecated v6.
     // wait=true makes failures visible and returns the message id. with_components enables link buttons.
-    const url = httpUrl(raw, 'url');
+    const url = httpUrl(raw, 'url', w);
     url.pathname = url.pathname.replace(/\/api\/(v\d+\/)?webhooks\//, '/api/v10/webhooks/');
     url.searchParams.set('wait', 'true');
     url.searchParams.set('with_components', 'true');
-    const threadId = optStr(raw, 'threadId');
-    if (threadId && !/^\d+$/.test(threadId)) throw new Error('"threadId" must be the thread\'s id: digits only');
+    const threadId = optStr(raw, 'threadId', w);
+    if (threadId && !/^\d+$/.test(threadId)) throw new Error(`config: ${w}.threadId must be the thread's id: digits only`);
     if (threadId) url.searchParams.set('thread_id', threadId);
-    return { url: url.toString(), mention: optStr(raw, 'mention') };
+    return { url: url.toString(), mention: optStr(raw, 'mention', w) };
   },
 
   render(m, cfg, d) {
@@ -70,6 +70,4 @@ export const discord: Target<DiscordConfig> = {
         : undefined,
     };
   },
-
-  send: (payload, cfg) => postJson(cfg.url, payload),
 };

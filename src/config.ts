@@ -1,15 +1,14 @@
-import { createPrivateKey } from 'node:crypto';
-import { signJwt } from './sources/shared.ts';
+import { sign } from 'node:crypto';
 import { parse } from 'yaml';
-import { SEVERITIES, type Message, type Severity } from './message.ts';
+import { SEVERITIES, type Severity } from './message.ts';
 import type { IngestEvent } from './sources/ingest.ts';
-import { keysOf, type Delivery, type Target } from './targets/shared.ts';
+import { keysOf, obj, optStr, postJson, str, type Obj, type Target, type TargetInstance } from './targets/shared.ts';
 import { slack, type SlackTarget } from './targets/slack.ts';
 import { discord, type DiscordTarget } from './targets/discord.ts';
 import { teams, type TeamsTarget } from './targets/teams.ts';
 import { DEFAULTS } from './config.defaults.ts';
 
-const TARGET_TYPES: Record<string, Target<any>> = { slack, discord, teams };
+const TARGET_TYPES: Record<string, Target<{ url: string }>> = { slack, discord, teams };
 
 /**
  * The config: YAML in the Worker's `STOREHERALD_CONFIG` variable, read on the first request or cron run. An unknown key
@@ -194,42 +193,18 @@ export interface AppConfig extends ConfigApp {
   id: string; // its key in ConfigFile.apps
 }
 export type Route = Required<ConfigRoute>;
-/** A target bound to its parsed config. */
-export interface TargetInstance {
-  render(msg: Message, d: Delivery): unknown;
-  send(payload: unknown): Promise<void>;
-}
-export interface AscApi {
-  issuerId: string;
-  keyId: string;
-  /** PEM, not a KeyObject: workerd's sign() rejects a KeyObject with dsaEncoding. */
-  privateKey: string;
-}
 export interface PlayApi {
   serviceAccount: { client_email: string; private_key: string };
 }
 export interface Config {
   apps: Map<string, AppConfig>;
-  ascApi?: AscApi;
+  ascApi?: ConfigAscApi;
   playApi?: PlayApi;
   ingest?: ConfigIngest;
   targets: Map<string, TargetInstance>;
   routes: Route[];
 }
 
-type Obj = Record<string, unknown>;
-
-function obj(v: unknown, where: string, allowed?: string[]): Obj {
-  if (!v || typeof v !== 'object' || Array.isArray(v)) throw new Error(`config: ${where} must be a mapping`);
-  // A typo like `minseverity` would otherwise silently disable a filter.
-  const unknown = allowed && Object.keys(v).filter((k) => !allowed.includes(k));
-  if (unknown?.length) throw new Error(`config: unknown key(s) in ${where}: ${unknown.join(', ')}`);
-  return v as Obj;
-}
-function str(o: Obj, k: string, where: string): string {
-  if (typeof o[k] !== 'string' || !o[k]) throw new Error(`config: ${where}.${k} must be a non-empty string`);
-  return o[k] as string;
-}
 function strList(o: Obj, k: string, where: string): string[] {
   const v = o[k];
   if (!Array.isArray(v) || !v.length || !v.every((x) => typeof x === 'string' && x)) throw new Error(`config: ${where}.${k} must be a non-empty list of strings`);
@@ -241,9 +216,10 @@ function inline(v: string, start: string, where: string): string {
   throw new Error(`config: ${where} must be inline, starting with ${start}`);
 }
 // node:crypto's error names no field, and must not be replaced by one that quotes the key.
-function checkKey(where: string, check: () => unknown) {
+// Signs rather than parses: workerd rejects a KeyObject with dsaEncoding, and only signing shows it.
+function checkKey(where: string, key: Parameters<typeof sign>[2]) {
   try {
-    check();
+    sign('sha256', Buffer.alloc(0), key);
   } catch {
     throw new Error(`config: ${where} is not a usable private key`);
   }
@@ -283,7 +259,7 @@ function parseApps(v: unknown): Map<string, AppConfig> {
       eas: eas && { secret: str(eas, 'secret', `${w}.eas`) },
       asc: asc && {
         secret: str(asc, 'secret', `${w}.asc`),
-        appId: asc.appId == null ? undefined : str(asc, 'appId', `${w}.asc`),
+        appId: optStr(asc, 'appId', `${w}.asc`),
         reviews: bool(asc, 'reviews', `${w}.asc`, DEFAULTS.ConfigAsc.reviews),
       },
       play: play && {
@@ -297,12 +273,11 @@ function parseApps(v: unknown): Map<string, AppConfig> {
   return apps;
 }
 
-function parseAscApi(v: unknown): AscApi {
+function parseAscApi(v: unknown): ConfigAscApi {
   const a = obj(v, 'ascApi', keysOf<ConfigAscApi>({ issuerId: true, keyId: true, privateKey: true }));
   const pem = inline(str(a, 'privateKey', 'ascApi'), '-----BEGIN', 'ascApi.privateKey');
-  // Signs rather than parses: workerd rejects the KeyObject form here, and only signing shows it.
-  checkKey('ascApi.privateKey', () => signJwt({}, {}, { key: pem, dsaEncoding: 'ieee-p1363' }));
-  return { issuerId: str(a, 'issuerId', 'ascApi'), keyId: str(a, 'keyId', 'ascApi'), privateKey: pem };
+  checkKey('ascApi.privateKey', { key: pem, dsaEncoding: 'ieee-p1363' });
+  return { issuerId: str(a, 'issuerId', 'ascApi'), keyId: str(a, 'keyId', 'ascApi'), privateKey: pem }; // PEM, not a KeyObject: workerd's sign() rejects a KeyObject with dsaEncoding
 }
 
 function parsePlayApi(v: unknown): PlayApi {
@@ -315,7 +290,7 @@ function parsePlayApi(v: unknown): PlayApi {
     throw new Error('config: playApi.serviceAccount is not valid JSON'); // not err.message: it quotes the private key
   }
   if (typeof sa?.client_email !== 'string' || typeof sa.private_key !== 'string') throw new Error('config: playApi.serviceAccount is not a service-account key JSON');
-  checkKey('playApi.serviceAccount private_key', () => createPrivateKey(sa.private_key as string)); // fail at load, not on every poll
+  checkKey('playApi.serviceAccount private_key', sa.private_key); // fail at load, not on every poll
   return { serviceAccount: { client_email: sa.client_email, private_key: sa.private_key } };
 }
 
@@ -339,13 +314,8 @@ function parseTargets(v: unknown): Map<string, TargetInstance> {
     if (!target) throw new Error(`config: targets.${id}.type must be one of ${Object.keys(TARGET_TYPES).join(', ')}`);
     obj(raw, `targets.${id}`, ['id', 'type', ...target.keys]);
     if (targets.has(id)) throw new Error(`config: duplicate target id ${id}`);
-    let c: unknown;
-    try {
-      c = target.parseConfig(t);
-    } catch (err) {
-      throw new Error(`config: targets.${id}: ${(err as Error).message}`);
-    }
-    targets.set(id, { render: (m, d) => target.render(m, c, d), send: (payload) => target.send(payload, c) });
+    const c = target.parseConfig(t, `targets.${id}`);
+    targets.set(id, { render: (m, d) => target.render(m, c, d), send: (payload) => postJson(c.url, payload) });
   }
   return targets;
 }

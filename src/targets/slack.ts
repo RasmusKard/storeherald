@@ -1,5 +1,5 @@
 import type { ConfigFile } from '../config.ts';
-import { SEVERITY, type Target, bodyOf, fieldsOf, httpUrl, keysOf, linksOf, optStr, postJson, truncate } from './shared.ts';
+import { SEVERITY, type Target, bodyOf, fieldsOf, httpUrl, keysOf, linksOf, optStr, truncate } from './shared.ts';
 
 /** A target in {@link ConfigFile.targets} that posts to a Slack incoming webhook. The bot's name and icon come from the Slack app. */
 export interface SlackTarget {
@@ -23,7 +23,7 @@ const mrkdwn = (text: string) => ({ type: 'mrkdwn', text, verbatim: true }); // 
 
 export const slack: Target<SlackConfig> = {
   keys: keysOf<Omit<SlackTarget, 'id' | 'type'>>({ url: true, mention: true }),
-  parseConfig: (raw) => ({ url: httpUrl(raw, 'url').href, mention: optStr(raw, 'mention') }),
+  parseConfig: (raw, w) => ({ url: httpUrl(raw, 'url', w).href, mention: optStr(raw, 'mention', w) }),
 
   render(m, cfg, d) {
     const { emoji, color } = SEVERITY[m.severity];
@@ -64,6 +64,4 @@ export const slack: Target<SlackConfig> = {
       ],
     };
   },
-
-  send: (payload, cfg) => postJson(cfg.url, payload),
 };

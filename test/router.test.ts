@@ -2,9 +2,10 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import { parse } from 'yaml';
-import { interpolate, loadConfig, parseConfig, type TargetInstance } from '../src/config.ts';
+import { interpolate, loadConfig, parseConfig } from '../src/config.ts';
 import type { Message } from '../src/message.ts';
 import { createRouter, plan } from '../src/router.ts';
+import type { TargetInstance } from '../src/targets/shared.ts';
 import { ascKey, serviceAccount } from './keys.ts';
 
 const msg = (over: Partial<Message> = {}): Message => ({
