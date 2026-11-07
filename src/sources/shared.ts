@@ -36,7 +36,7 @@ export interface StateStore {
 }
 
 /** One thing a poller watches: `poll` turns its last state (undefined on the first run) into messages and its new state. */
-export interface Poll<S> {
+interface Poll<S> {
   id: string;
   poll(prev: S | undefined): Promise<{ next: S; messages: Message[] }>;
 }

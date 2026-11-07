@@ -72,6 +72,6 @@ void test('vitals: the first poll is a baseline, then new anomalies and issues n
 void test('vitals: a re-ranking alone leaves the stored state as it was, so it is not written again', () => {
   const a = (name: string) => ({ name, metricSet: 'apps/com.acme.myapp/crashRateMetricSet' });
   const i = (name: string) => ({ name, type: 'CRASH' });
-  const first = vitalsDiff(undefined, [a('a1'), a('a2')], [i('i1'), i('i2')], app);
-  assert.deepEqual(vitalsDiff(first.next, [a('a2'), a('a1')], [i('i2'), i('i1')], app), { next: first.next, messages: [] });
+  const first = vitalsDiff(undefined, { anomalies: [a('a1'), a('a2')], issues: [i('i1'), i('i2')] }, app);
+  assert.deepEqual(vitalsDiff(first.next, { anomalies: [a('a2'), a('a1')], issues: [i('i2'), i('i1')] }, app), { next: first.next, messages: [] });
 });
