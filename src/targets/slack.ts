@@ -17,7 +17,7 @@ type SlackConfig = Pick<SlackTarget, 'url' | 'mention'>;
 
 // mrkdwn has no escape for * _ ~. Only &<> matter: escaping them blocks injected <!channel> and <url|fake> links.
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-const clip = (s: string, max: number) => truncate(esc(s), max);
+const clip = (s: string, max: number) => truncate(esc(s), max).replace(/&\w*…$/, '…'); // no half-cut &lt; before the …
 const safeUrl = (u: string) => u.replace(/[|<>]/g, encodeURIComponent); // these break <url|text>
 const mrkdwn = (text: string) => ({ type: 'mrkdwn', text, verbatim: true }); // verbatim: no auto-linking of @here, #channel, urls
 
