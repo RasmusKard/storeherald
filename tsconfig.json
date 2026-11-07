@@ -2,6 +2,8 @@
   "compilerOptions": {
     "noEmit": true,
     "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
     "target": "es2024",
     "module": "nodenext",
     "erasableSyntaxOnly": true,
@@ -10,5 +12,5 @@
     "types": ["node"],
     "skipLibCheck": true
   },
-  "include": ["src", "test"]
+  "include": ["src", "test", ".github/scripts"]
 }
