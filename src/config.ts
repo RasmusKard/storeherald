@@ -69,7 +69,8 @@ export interface ConfigAsc extends ConfigWebhook {
    * with {@link ConfigFile.ascApi} on its cron schedule, in `wrangler.jsonc`, and posts phased release changes:
    * `rollout.updated` for each day's new percentage or a resume, `rollout.paused` and `rollout.completed`. It also posts
    * `appreview.unresolved` when App Review sends back a submission whose version wasn't rejected, such as one for an
-   * in-app purchase or event. The first poll only records the current state.
+   * in-app purchase or event. The first poll only records the current state. It also makes every App Store Connect
+   * message link to the app.
    */
   appId?: string;
   /**
