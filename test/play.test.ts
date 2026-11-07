@@ -1,15 +1,13 @@
 // One Google Play poll, against a stubbed Play API, a fake router and a fake KV store.
 import assert from 'node:assert/strict';
-import { generateKeyPairSync } from 'node:crypto';
 import { test } from 'node:test';
 import type { AppConfig } from '../src/config.ts';
 import type { Outcome } from '../src/router.ts';
 import { pollPlay } from '../src/sources/play.ts';
+import { serviceAccount } from './keys.ts';
 
 const app: AppConfig = { id: 'myapp', name: 'My App', play: { packageName: 'com.acme.myapp', tracks: ['production'] } };
-// A real RSA key: the poll signs its token request with it.
-const private_key = generateKeyPairSync('rsa', { modulusLength: 2048 }).privateKey.export({ type: 'pkcs8', format: 'pem' }) as string;
-const cfg = { playApi: { serviceAccount: { client_email: 'poller@acme.iam', private_key } }, apps: new Map([[app.id, app]]) };
+const cfg = { playApi: { serviceAccount }, apps: new Map([[app.id, app]]) };
 const stored = (state: string) => JSON.stringify({ 'com.acme.myapp/production': { '57|57': `RELEASE_LIFECYCLE_STATE_${state}` } });
 const play = async (url: string) =>
   Response.json(url.includes('oauth2') ? { access_token: 't', expires_in: 3600 }
