@@ -44,7 +44,7 @@ export interface IngestEvent {
   links?: {
     /** Up to 200 characters; Slack shows the first 75, Discord 80 and Teams 40. */
     label: string;
-    /** An http(s) URL, up to 3000 characters. Discord drops links with URLs over 512 characters, Teams over 2048. */
+    /** An http(s) URL, up to 3000 characters. Once percent-encoded, a URL over 512 characters is dropped by Discord, over 2048 by Teams and over 3000 by Slack. */
     url: string;
   }[];
   /** Labels routes match on, such as `{ "app": "myapp" }`. Never shown. Values up to 200 characters. */
@@ -104,7 +104,7 @@ export function ingestToMessage(id: string, body: unknown): Message | string {
     body: e.body,
     actor: e.actor,
     fields: e.fields,
-    links: e.links,
+    links: e.links?.map((l) => ({ label: l.label, url: new URL(l.url).href })), // encoded, so each target's URL cap counts what it gets
     labels: e.labels ?? {},
   };
 }
