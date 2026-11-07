@@ -6,13 +6,11 @@ import type { Message } from '../message.ts';
 import type { Router } from '../router.ts';
 import { fetchJson, pollEach, reviewMessage, signJwt, type StateEvent, type StateStore } from './shared.ts';
 
-export interface PlayRelease {
+interface PlayRelease {
   releaseName?: string;
   releaseLifecycleState?: string;
   activeArtifacts?: { versionCode?: string | number }[];
 }
-/** `${packageName}/${track}` -> releaseKey -> lifecycle state */
-export type PlayState = Record<string, Record<string, string>>;
 
 const EVENTS: Record<string, StateEvent> = {
   RELEASE_LIFECYCLE_STATE_IN_REVIEW: { type: 'appreview.in_review', severity: 'info', what: 'in review' },
@@ -76,10 +74,13 @@ async function accessToken(api: PlayApi): Promise<string> {
   return token.value;
 }
 
+async function playFetch<T>(api: PlayApi, what: string, url: string): Promise<T> {
+  return (await fetchJson(what, url, { headers: { authorization: `Bearer ${await accessToken(api)}` } }, 15_000)) as T;
+}
+
 async function listReleases(api: PlayApi, pkg: string, track: string): Promise<PlayRelease[]> {
   const url = `https://androidpublisher.googleapis.com/androidpublisher/v3/applications/${encodeURIComponent(pkg)}/tracks/${encodeURIComponent(track)}/releases`;
-  const r: { releases?: PlayRelease[] } = await fetchJson(`Play releases ${pkg}/${track}`, url, { headers: { authorization: `Bearer ${await accessToken(api)}` } }, 15_000);
-  return r.releases ?? [];
+  return (await playFetch<{ releases?: PlayRelease[] }>(api, `Play releases ${pkg}/${track}`, url)).releases ?? [];
 }
 
 /**
@@ -92,30 +93,27 @@ export async function pollPlay(cfg: Pick<Config, 'playApi' | 'apps'>, router: Ro
   if (!api || !apps.length) return;
   if (!store) return log('error', 'no STATE KV binding: Google Play is not polled');
 
-  await pollEach<PlayState[string]>(store, 'play-state', router, apps.flatMap((app) => app.play!.tracks.map((track) => ({
+  await pollEach<Record<string, string>>(store, 'play-state', router, apps.flatMap((app) => app.play!.tracks.map((track) => ({
     id: `${app.play!.packageName}/${track}`,
     poll: async (prev) => playDiff(prev, await listReleases(api, app.play!.packageName, track), app, track),
   }))));
   // One state entry per app, for the apps with the option on.
   const perApp = <S>(key: string, on: 'vitals' | 'reviews', poll: (app: AppConfig, pkg: string, prev: S | undefined) => Promise<{ next: S; messages: Message[] }>) =>
     pollEach<S>(store, key, router, apps.filter((a) => a.play![on]).map((app) => ({ id: app.play!.packageName, poll: (prev) => poll(app, app.play!.packageName, prev) })));
-  await perApp<VitalsState[string]>('play-vitals', 'vitals', async (app, pkg, prev) => {
-    const { anomalies, issues } = await listVitals(api, pkg);
-    return vitalsDiff(prev, anomalies, issues, app);
-  });
+  await perApp<VitalsState>('play-vitals', 'vitals', async (app, pkg, prev) => vitalsDiff(prev, await listVitals(api, pkg), app));
   await perApp<number>('play-reviews', 'reviews', async (app, pkg, prev) => playReviewsDiff(prev, await listReviews(api, pkg), app));
 }
 
 // ---- Android vitals (optional: ConfigPlay.vitals)
 // https://developers.google.com/play/developer/reporting/reference/rest
 
-export interface Anomaly {
+interface Anomaly {
   name: string;
   metricSet: string; // apps/{app}/crashRateMetricSet
   dimensions?: { dimension: string; valueLabel?: string; stringValue?: string; int64Value?: string }[];
   metric?: { metric: string; decimalValue?: { value: string } };
 }
-export interface ErrorIssue {
+interface ErrorIssue {
   name: string;
   type: string; // CRASH, APPLICATION_NOT_RESPONDING
   cause?: string; // the exception or signal, or the kind of ANR
@@ -126,8 +124,8 @@ export interface ErrorIssue {
   firstAppVersion?: { versionCode?: string };
   lastAppVersion?: { versionCode?: string };
 }
-/** packageName -> the anomaly and issue names seen */
-export type VitalsState = Record<string, { anomalies: string[]; issues: string[] }>;
+/** The anomaly and issue names seen */
+type VitalsState = { anomalies: string[]; issues: string[] };
 
 // Issues drop out of the 24-hour search when they stop happening, so remember them longer than that, within reason.
 const ISSUES_KEPT = 500;
@@ -144,7 +142,7 @@ function metricValue(m: Anomaly['metric']): string {
 }
 
 /** New anomalies and issues since last time. `prev === undefined` (first poll) records a baseline and notifies nothing. */
-export function vitalsDiff(prev: VitalsState[string] | undefined, anomalies: Anomaly[], issues: ErrorIssue[], app: AppConfig) {
+export function vitalsDiff(prev: VitalsState | undefined, { anomalies, issues }: { anomalies: Anomaly[]; issues: ErrorIssue[] }, app: AppConfig) {
   const next = { anomalies: anomalies.map((a) => a.name).sort(), issues: [...new Set([...issues.map((i) => i.name), ...(prev?.issues ?? [])])].slice(0, ISSUES_KEPT).sort() };
   if (!prev) return { next, messages: [] };
   const base = { source: 'Google Play', labels: { app: app.id, platform: 'android' } };
@@ -180,20 +178,19 @@ export function vitalsDiff(prev: VitalsState[string] | undefined, anomalies: Ano
 }
 
 async function listVitals(api: PlayApi, pkg: string) {
-  const init = { headers: { authorization: `Bearer ${await accessToken(api)}` } };
   const app = `${REPORTING}/apps/${encodeURIComponent(pkg)}`;
   const since = new Date(Date.now() - 7 * 24 * 3600_000).toISOString();
-  const a = (await fetchJson(`Play anomalies ${pkg}`, `${app}/anomalies?pageSize=100&filter=${encodeURIComponent(`activeBetween("${since}", UNBOUNDED)`)}`, init, 15_000)) as { anomalies?: Anomaly[] };
+  const a = (await playFetch<{ anomalies?: Anomaly[] }>(api, `Play anomalies ${pkg}`, `${app}/anomalies?pageSize=100&filter=${encodeURIComponent(`activeBetween("${since}", UNBOUNDED)`)}`));
   // The last 24 hours, most users first.
   const filter = encodeURIComponent('errorIssueType = CRASH OR errorIssueType = ANR');
-  const i = (await fetchJson(`Play error issues ${pkg}`, `${app}/errorIssues:search?pageSize=100&orderBy=distinctUsers%20desc&filter=${filter}`, init, 15_000)) as { errorIssues?: ErrorIssue[] };
+  const i = (await playFetch<{ errorIssues?: ErrorIssue[] }>(api, `Play error issues ${pkg}`, `${app}/errorIssues:search?pageSize=100&orderBy=distinctUsers%20desc&filter=${filter}`));
   return { anomalies: a.anomalies ?? [], issues: i.errorIssues ?? [] };
 }
 
 // ---- Reviews (optional: ConfigPlay.reviews)
 // https://developers.google.com/android-publisher/reply-to-reviews
 
-export interface PlayReview {
+interface PlayReview {
   reviewId: string;
   authorName?: string;
   comments?: { userComment?: { text?: string; lastModified?: { seconds?: string }; starRating?: number; appVersionName?: string; reviewerLanguage?: string } }[];
@@ -224,6 +221,5 @@ export function playReviewsDiff(prev: number | undefined, reviews: PlayReview[],
 async function listReviews(api: PlayApi, pkg: string): Promise<PlayReview[]> {
   // shortcut: one page of 100, the API's maximum: enough for a 15-minute poll unless an app gets more reviews than that.
   const url = `https://androidpublisher.googleapis.com/androidpublisher/v3/applications/${encodeURIComponent(pkg)}/reviews?maxResults=100`;
-  const r = (await fetchJson(`Play reviews ${pkg}`, url, { headers: { authorization: `Bearer ${await accessToken(api)}` } }, 15_000)) as { reviews?: PlayReview[] };
-  return r.reviews ?? [];
+  return (await playFetch<{ reviews?: PlayReview[] }>(api, `Play reviews ${pkg}`, url)).reviews ?? [];
 }
