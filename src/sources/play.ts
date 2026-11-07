@@ -145,7 +145,7 @@ function metricValue(m: Anomaly['metric']): string {
 
 /** New anomalies and issues since last time. `prev === undefined` (first poll) records a baseline and notifies nothing. */
 export function vitalsDiff(prev: VitalsState[string] | undefined, anomalies: Anomaly[], issues: ErrorIssue[], app: AppConfig) {
-  const next = { anomalies: anomalies.map((a) => a.name), issues: [...new Set([...issues.map((i) => i.name), ...(prev?.issues ?? [])])].slice(0, ISSUES_KEPT) };
+  const next = { anomalies: anomalies.map((a) => a.name).sort(), issues: [...new Set([...issues.map((i) => i.name), ...(prev?.issues ?? [])])].slice(0, ISSUES_KEPT).sort() };
   if (!prev) return { next, messages: [] };
   const base = { source: 'Google Play', labels: { app: app.id, platform: 'android' } };
   const messages: Message[] = [

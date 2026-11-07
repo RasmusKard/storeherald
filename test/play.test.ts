@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { AppConfig } from '../src/config.ts';
 import type { Outcome } from '../src/router.ts';
-import { pollPlay } from '../src/sources/play.ts';
+import { pollPlay, vitalsDiff } from '../src/sources/play.ts';
 import { serviceAccount } from './keys.ts';
 
 const app: AppConfig = { id: 'myapp', name: 'My App', play: { packageName: 'com.acme.myapp', tracks: ['production'] } };
@@ -51,4 +51,11 @@ void test('vitals: the first poll is a baseline, then new anomalies and issues n
   kv.set('play-vitals', JSON.stringify({ 'com.acme.myapp': { anomalies: ['apps/com.acme.myapp/anomalies/a1'], issues: ['apps/com.acme.myapp/i1'] } }));
   await pollPlay(vcfg, router, store);
   assert.deepEqual(sent.map((m) => m.title), ['Android ANR rate above normal: My App', 'New Android crash in My App: IllegalStateException']);
+});
+
+void test('vitals: a re-ranking alone leaves the stored state as it was, so it is not written again', () => {
+  const a = (name: string) => ({ name, metricSet: 'apps/com.acme.myapp/crashRateMetricSet' });
+  const i = (name: string) => ({ name, type: 'CRASH' });
+  const first = vitalsDiff(undefined, [a('a1'), a('a2')], [i('i1'), i('i2')], app);
+  assert.deepEqual(vitalsDiff(first.next, [a('a2'), a('a1')], [i('i2'), i('i1')], app), { next: first.next, messages: [] });
 });
