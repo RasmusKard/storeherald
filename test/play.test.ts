@@ -18,7 +18,7 @@ void test('poll: a state change is delivered and the new state saved', async (t)
   t.mock.method(globalThis, 'fetch', play);
   const sent: string[] = [];
   const put = t.mock.fn(async (_k: string, _v: string) => {});
-  await pollPlay(cfg, router('ok', sent), { get: async () => stored('IN_REVIEW'), put });
+  await pollPlay(cfg, router('ok', sent), { get: async (k: string) => (k === 'play-state' ? stored('IN_REVIEW') : null), put });
   assert.deepEqual(sent, ['release.live']);
   assert.deepEqual(put.mock.calls.map((c) => c.arguments), [['play-state', stored('PUBLISHED')]]);
 });
@@ -29,10 +29,26 @@ void test('poll: nothing is saved when the state fails to load, is unchanged, or
   const put = t.mock.fn(async () => {});
   // A save after a failed load would overwrite the good stored state with a fresh baseline.
   await pollPlay(cfg, router('ok'), { get: async () => { throw new Error('store down'); }, put });
-  await pollPlay(cfg, router('ok'), { get: async () => stored('PUBLISHED'), put });
+  await pollPlay(cfg, router('ok'), { get: async (k: string) => (k === 'play-state' ? stored('PUBLISHED') : null), put });
   // Not saved, so the next run sends it again.
-  await pollPlay(cfg, router('retry'), { get: async () => stored('IN_REVIEW'), put });
+  await pollPlay(cfg, router('retry'), { get: async (k: string) => (k === 'play-state' ? stored('IN_REVIEW') : null), put });
   assert.equal(put.mock.callCount(), 0);
+});
+
+void test('poll: an option turned off and on again starts from a fresh baseline', async (t) => {
+  let seconds = '100';
+  t.mock.method(globalThis, 'fetch', async (url: string) =>
+    Response.json(url.includes('oauth2') ? { access_token: 't', expires_in: 3600 } : url.includes('/reviews')
+      ? { reviews: [{ reviewId: 'g1', comments: [{ userComment: { text: 'Great', starRating: 5, lastModified: { seconds } } }] }] } : { releases: [] }));
+  const kv = new Map<string, string>();
+  const store = { get: async (k: string) => kv.get(k) ?? null, put: async (k: string, v: string) => void kv.set(k, v) };
+  const withReviews = (reviews: boolean) => ({ ...cfg, apps: new Map([[app.id, { ...app, play: { ...app.play!, reviews } }]]) });
+  const sent: string[] = [];
+  await pollPlay(withReviews(true), router('ok', sent), store);
+  await pollPlay(withReviews(false), router('ok', sent), store);
+  seconds = '200';
+  await pollPlay(withReviews(true), router('ok', sent), store);
+  assert.deepEqual(sent, []);
 });
 
 void test('vitals: the first poll is a baseline, then new anomalies and issues notify', async (t) => {
