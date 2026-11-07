@@ -18,7 +18,7 @@ The [config reference](https://rasmuskard.github.io/storeherald/interfaces/Confi
 
 When a target fails:
 
-- If it's down (no reply, a timeout, a 429 or a 5xx) and no target got the event, the Worker replies 503. EAS resends it a few times, an `/ingest` caller should resend it, and App Store Connect needs a resend by hand (see [Limits](#limits)). The Google Play poller retries on its next poll.
+- If it's down (no reply, a timeout, a 429 or a 5xx) and no target got the event, the Worker replies 503. EAS resends it a few times, an `/ingest` caller should resend it, and App Store Connect needs a resend by hand (see [Limits](#limits)). The Google Play and App Store Connect pollers retry on their next poll.
 - If another target got it, the sender isn't asked to resend. The failure is logged at `error` level.
 - If it rejects the post with any other 4xx, such as for a deleted webhook, the sender isn't asked to resend either. The failure is logged at `error` level.
 - A message can occasionally be posted twice: a post that timed out is retried even if it landed, and a resent event repeats its messages that did get through.
@@ -46,7 +46,7 @@ To upgrade, run `git fetch --tags`, check out the newest tag the same way, then 
    npx wrangler secret put EAS_WEBHOOK_SECRET
    ```
 
-3. If you neither use Google Play nor set `asc.appId`, remove `triggers` and `kv_namespaces` from [`wrangler.jsonc`](wrangler.jsonc). Otherwise set its cron schedule to how often to poll, at most every 2 minutes: a faster schedule can post a change twice.
+3. If you neither use Google Play nor set `asc.appId`, remove `triggers` and `kv_namespaces` from [`wrangler.jsonc`](wrangler.jsonc). Otherwise set its cron schedule to how often to poll, at most every 10 minutes: a slow run can overlap the next and post a change twice.
 4. Deploy with `npx wrangler deploy`. It prints the Worker's URL.
 5. [Connect the sources](#sources).
 6. Logs are JSON lines in the Worker's logs. Alert on those with `"level":"error"` and point your uptime check at `GET /health_check`, which fails when the config does.
@@ -76,11 +76,11 @@ eas webhook:create --event SUBMIT --url https://your.host/eas/myapp --secret "$E
 
 Add [`ascApi`](https://rasmuskard.github.io/storeherald/interfaces/ConfigAscApi.html) to the config to get version numbers in messages.
 
-Phased releases, App Store reviews and App Review results for in-app purchases and events have no webhook. With [`asc.appId`](https://rasmuskard.github.io/storeherald/interfaces/ConfigAsc.html) set, the Worker polls them on the cron schedule in [`wrangler.jsonc`](wrangler.jsonc), keeping what it has seen in the `STATE` KV namespace.
+Phased releases, App Review results for in-app purchases and events, and App Store reviews have no webhook. With [`asc.appId`](https://rasmuskard.github.io/storeherald/interfaces/ConfigAsc.html#appid) set, the Worker polls them; App Store reviews also need [`asc.reviews`](https://rasmuskard.github.io/storeherald/interfaces/ConfigAsc.html#reviews).
 
 ### Google Play
 
-The Worker polls Play on the cron schedule in [`wrangler.jsonc`](wrangler.jsonc) and keeps what it has seen in the `STATE` KV namespace, which `wrangler deploy` creates. The first poll only records the current state. Messages start with the next change.
+To let the Worker poll Play:
 
 - In a Google Cloud project, enable the *Google Play Android Developer API*.
 - Create a service account in that project and download its JSON key.
@@ -125,6 +125,7 @@ if (!res.ok) throw new Error(`ingest: ${res.status} ${await res.text()}`);
 
 - Google Play rejection reasons aren't in its API. They arrive by email.
 - If every target was down when an App Store Connect event arrived, resend it by hand from the webhook's delivery list in App Store Connect.
+- A cron run is capped at the Workers [subrequest limit](https://developers.cloudflare.com/workers/platform/limits/). It makes one per Play track and up to 6 more per app, one per message for each target, one for the Google token, and one to read each poller's state in KV and one to save it when it changed. Past the limit, requests fail and each run posts the same messages again.
 
 ## License
 
