@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict';
-import { generateKeyPairSync } from 'node:crypto';
 import { test } from 'node:test';
 import type { AppConfig } from '../src/config.ts';
 import { ascMessages, ascReviewsDiff, ascToMessages, phasedDiff, unresolvedDiff, verifyAsc } from '../src/sources/asc.ts';
 import { easToMessages } from '../src/sources/eas.ts';
 import { ingestToMessage, verifyIngest } from '../src/sources/ingest.ts';
 import { playDiff, playReviewsDiff } from '../src/sources/play.ts';
+import { ascKey } from './keys.ts';
 
 const app: AppConfig = { id: 'myapp', name: 'My App' };
 
@@ -62,7 +62,7 @@ void test("ASC: Apple's external TestFlight example maps to a beta review approv
   t.mock.method(globalThis, 'fetch', async (url: string) =>
     Response.json(url.includes('/buildBetaDetails/ad7e6298/relationships/build') ? { data: { type: 'builds', id: 'b57' } }
       : { data: { attributes: { version: '57' }, relationships: { app: { data: { id: '123' } } } }, included: [{ type: 'preReleaseVersions', attributes: { version: '1.4.2', platform: 'IOS' } }] }));
-  const api = { issuerId: 'i', keyId: 'k', privateKey: generateKeyPairSync('ec', { namedCurve: 'P-256' }).privateKey.export({ type: 'pkcs8', format: 'pem' }) as string };
+  const api = { issuerId: 'i', keyId: 'k', privateKey: ascKey };
   const [m] = await ascMessages(event, app, api);
   assert.deepEqual([m.type, m.title, m.links?.[0].url], ['betareview.approved', 'iOS build approved in TestFlight review: My App 1.4.2 (57)', 'https://appstoreconnect.apple.com/apps/123/testflight']);
 });
