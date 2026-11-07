@@ -104,3 +104,20 @@ void test('router: no resend once a target got the message, or when every failed
   assert.equal(await deliver(target(404), target(404)), 'ok');
   assert.equal(await deliver(target(503), target(404)), 'retry');
 });
+
+void test('router: posts a batch one message at a time, so a burst stays under webhook rate limits', async () => {
+  let open = 0;
+  let most = 0;
+  const target: TargetInstance = {
+    render: () => ({}),
+    send: async () => {
+      most = Math.max(most, ++open);
+      await new Promise((r) => setTimeout(r, 1));
+      open--;
+    },
+  };
+  const { routes } = parseConfig({ ...baseConfig, routes: [{ types: ['*'], targets: ['a'] }] });
+  const router = createRouter({ routes, targets: new Map([['a', target]]) });
+  assert.equal(await router.deliver([msg(), msg(), msg()]), 'ok');
+  assert.equal(most, 1);
+});
