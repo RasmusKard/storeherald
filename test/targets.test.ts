@@ -49,6 +49,12 @@ void test('teams: renders an Adaptive Card under 28 KB with the mention', () => 
   assert.equal(p.attachments[0].content.msteams.entities[0].text, '<at>Release crew</at>');
 });
 
+void test("discord: threadId must be the thread's id", () => {
+  const url = 'https://discord.com/api/webhooks/1/abc';
+  assert.match(discord.parseConfig({ url, threadId: '123' }).url, /[?&]thread_id=123(&|$)/);
+  for (const threadId of [' 123', 'https://discord.com/channels/1/2/3']) assert.throws(() => discord.parseConfig({ url, threadId }), /threadId/);
+});
+
 void test('teams: a mention needs a non-empty id and name', () => {
   const url = 'https://x.environment.api.powerplatform.com/y';
   for (const mention of [{ id: '', name: 'Alex' }, { id: 'a@b.c', name: '' }]) assert.throws(() => teams.parseConfig({ url, mention }), /mention/);
