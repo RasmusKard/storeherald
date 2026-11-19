@@ -75,3 +75,9 @@ void test('vitals: a re-ranking alone leaves the stored state as it was, so it i
   const first = vitalsDiff(undefined, { anomalies: [a('a1'), a('a2')], issues: [i('i1'), i('i2')] }, app);
   assert.deepEqual(vitalsDiff(first.next, { anomalies: [a('a2'), a('a1')], issues: [i('i2'), i('i1')] }, app), { next: first.next, messages: [] });
 });
+
+void test('vitals: past 500 issues, the oldest seen is forgotten, not the last by name', () => {
+  const seen = Array.from({ length: 500 }, (_, n) => `z${n}`);
+  const { next } = vitalsDiff({ anomalies: [], issues: seen }, { anomalies: [], issues: [{ name: 'a', type: 'CRASH' }] }, app);
+  assert.deepEqual(next.issues, [...seen.slice(1), 'a']);
+});

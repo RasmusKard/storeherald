@@ -127,7 +127,7 @@ interface ErrorIssue {
 /** The anomaly and issue names seen */
 type VitalsState = { anomalies: string[]; issues: string[] };
 
-// Issues drop out of the 24-hour search when they stop happening, so remember them longer than that, within reason.
+// Issues drop out of the 24-hour search when they stop happening, so remember them longer than that, within reason. Kept in the order first seen, so the oldest are forgotten first.
 const ISSUES_KEPT = 500;
 const REPORTING = 'https://playdeveloperreporting.googleapis.com/v1beta1';
 
@@ -143,7 +143,8 @@ function metricValue(m: Anomaly['metric']): string {
 
 /** New anomalies and issues since last time. `prev === undefined` (first poll) records a baseline and notifies nothing. */
 export function vitalsDiff(prev: VitalsState | undefined, { anomalies, issues }: { anomalies: Anomaly[]; issues: ErrorIssue[] }, app: AppConfig) {
-  const next = { anomalies: anomalies.map((a) => a.name).sort(), issues: [...new Set([...issues.map((i) => i.name), ...(prev?.issues ?? [])])].slice(0, ISSUES_KEPT).sort() };
+  const seen = prev?.issues ?? [];
+  const next = { anomalies: anomalies.map((a) => a.name).sort(), issues: [...seen, ...issues.map((i) => i.name).filter((n) => !seen.includes(n)).sort()].slice(-ISSUES_KEPT) };
   if (!prev) return { next, messages: [] };
   const base = { source: 'Google Play', labels: { app: app.id, platform: 'android' } };
   const messages: Message[] = [
