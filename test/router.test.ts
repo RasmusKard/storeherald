@@ -47,6 +47,8 @@ void test('config: loaded from STOREHERALD_CONFIG; a binding is not a value', ()
   assert.deepEqual([...cfg.targets.keys()], ['a']);
   assert.throws(() => loadConfig({ STOREHERALD_CONFIG: yaml, SLACK: { get() {} } }), /SLACK is not set/);
   assert.throws(() => loadConfig({}), /STOREHERALD_CONFIG/);
+  assert.throws(() => loadConfig({ STOREHERALD_CONFIG: 'targets: [{ url: https://x/SECRET, x: ${V} }]' }),
+    (e: Error) => /line 1, column \d+$/.test(e.message) && !e.message.includes('SECRET'));
 });
 
 void test('config: play settings without playApi fail loading', () => {

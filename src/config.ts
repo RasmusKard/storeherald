@@ -361,5 +361,12 @@ export function parseConfig(raw: unknown): Config {
 
 export function loadConfig(env: Record<string, unknown>): Config {
   if (typeof env.STOREHERALD_CONFIG !== 'string') throw new Error('config: the STOREHERALD_CONFIG variable is not set');
-  return parseConfig(interpolate(parse(env.STOREHERALD_CONFIG), env));
+  let raw: unknown;
+  try {
+    raw = parse(env.STOREHERALD_CONFIG);
+  } catch (err) {
+    // Keep the first line, the reason and position: the rest quotes the YAML, which may hold a secret.
+    throw new Error(`config: ${(err as Error).message.split('\n')[0].replace(/:$/, '')}`);
+  }
+  return parseConfig(interpolate(raw, env));
 }
