@@ -1,0 +1,1 @@
+{"data":{"type":"appStoreVersionAppVersionStateUpdated","id":"verify-asc-2","attributes":{"oldValue":"IN_REVIEW","newValue":"READY_FOR_DISTRIBUTION","timestamp":"2026-11-19T11:30:00.000Z"},"relationships":{"instance":{"data":{"type":"appStoreVersions","id":"verify-version-1"}}}}}

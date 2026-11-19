@@ -1,0 +1,1 @@
+{"type":"update.published","title":"OTA update published","severity":"success","body":"Channel production, runtime 1.4.0","actor":"ci","source":"GitHub Actions","fields":[{"label":"Channel","value":"production"}],"links":[{"label":"View update","url":"https://expo.dev/accounts/acme/projects/myapp/updates/verify"}],"labels":{"app":"myapp"}}
