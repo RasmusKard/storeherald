@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.2.1](https://github.com/RasmusKard/storeherald/compare/v2.2.0...v2.2.1) (2026-11-19)
+
+
+### Bug Fixes
+
+* Forget the oldest Android vitals issues first, not the last by name ([#36](https://github.com/RasmusKard/storeherald/issues/36)) ([4a580a9](https://github.com/RasmusKard/storeherald/commit/4a580a94a96a6362b69df876045a8d030788603b))
+* Keep config values out of the YAML syntax error ([#37](https://github.com/RasmusKard/storeherald/issues/37)) ([d74815e](https://github.com/RasmusKard/storeherald/commit/d74815e432afaafb2ac8817a5b43e484c70077d3))
+
 ## [2.2.0](https://github.com/RasmusKard/storeherald/compare/v2.1.0...v2.2.0) (2026-11-07)
 
 
