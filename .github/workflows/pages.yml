@@ -31,8 +31,8 @@ jobs:
         with:
           ref: ${{ inputs.ref }}
           persist-credentials: false
-      # Tags up to v2.2.1 lock with npm.
-      - if: hashFiles('pnpm-lock.yaml') == ''
+      - name: Set up Node for tags that lock with npm
+        if: hashFiles('pnpm-lock.yaml') == ''
         uses: actions/setup-node@v7.1.0
         with:
           node-version: 24
