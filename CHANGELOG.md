@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.2.2](https://github.com/RasmusKard/storeherald/compare/v2.2.1...v2.2.2) (2026-11-28)
+
+
+### Build System
+
+* Switch from npm to pnpm ([#39](https://github.com/RasmusKard/storeherald/issues/39)) ([535983c](https://github.com/RasmusKard/storeherald/commit/535983c6a415e326b554c832ef0cd0c0eb37da9b))
+
 ## [2.2.1](https://github.com/RasmusKard/storeherald/compare/v2.2.0...v2.2.1) (2026-11-19)
 
 
