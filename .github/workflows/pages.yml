@@ -31,11 +31,14 @@ jobs:
         with:
           ref: ${{ inputs.ref }}
           persist-credentials: false
+      # Tags up to v2.2.1 lock with npm.
+      - if: hashFiles('pnpm-lock.yaml') != ''
+        uses: pnpm/action-setup@v6.1.1
       - uses: actions/setup-node@v7.1.0
         with:
           node-version: 24
-          cache: npm
-      - run: npm ci --ignore-scripts
+          cache: ${{ hashFiles('pnpm-lock.yaml') != '' && 'pnpm' || 'npm' }}
+      - run: if [ -f pnpm-lock.yaml ]; then pnpm install --frozen-lockfile --ignore-scripts; else npm ci --ignore-scripts; fi
       # --out: tags up to v1.0.0 wrote to docs/
       - run: npm run docs -- --out site
       - uses: actions/upload-pages-artifact@v5.0.0

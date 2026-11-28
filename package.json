@@ -5,12 +5,13 @@
   "license": "MIT",
   "private": true,
   "type": "module",
+  "packageManager": "pnpm@12.11.2",
   "engines": {
     "node": ">=24"
   },
   "scripts": {
     "test": "node --test 'test/*.test.ts'",
-    "check": "tsc && npm run gen:defaults -- --check && npm run docs",
+    "check": "tsc && pnpm run gen:defaults --check && pnpm run docs",
     "start": "wrangler dev",
     "gen:defaults": "tsdoc-defaults",
     "docs": "typedoc",

@@ -13,13 +13,13 @@ All helpers are in `.claude/skills/verify-storeherald/scripts/`. Run them from t
 
 - Nothing leaves this machine. Every target URL must point at the run's capture server (`http://127.0.0.1:<port>/...`). `control.sh launch` and `doctor` refuse a config whose targets point anywhere else.
 - No Apple or Google API calls: the run config has no `ascApi`, `playApi`, `apps.*.play` or `asc.appId`, and `run-config.ts` refuses one that does. Do not add them.
-- Never run `wrangler deploy`, `wrangler dev --remote`, `wrangler secret put`, `npm run deploy`, `wrangler login`, or any command that touches the Cloudflare account. Local `wrangler dev --local` only; launch also unsets `CLOUDFLARE_*` credentials for it and turns off wrangler telemetry.
+- Never run `wrangler deploy`, `wrangler dev --remote`, `wrangler secret put`, `pnpm run deploy`, `wrangler login`, or any command that touches the Cloudflare account. Local `wrangler dev --local` only; launch also unsets `CLOUDFLARE_*` credentials for it and turns off wrangler telemetry.
 - Never post to a real EAS, App Store Connect, Slack, Discord or Teams endpoint, even to "check". The secrets in a run are random test values generated at launch.
 - Kill only what `control.sh` started (it tracks process groups). Never `pkill wrangler` or `pkill workerd`: the user may have their own dev session.
 
 ## Launch
 
-Needs Node 24+ and `npm ci` done in the repo. No Cloudflare login is needed.
+Needs Node 24+ and `pnpm install --frozen-lockfile` done in the repo. No Cloudflare login is needed.
 
 ```sh
 .claude/skills/verify-storeherald/scripts/control.sh launch

@@ -19,7 +19,7 @@ description: "Model-check, with TLA+, that the Google Play poller never saves a 
 .claude/skills/verify-poll-delivery/check.sh NoOverlap.cfg
 ```
 
-It needs Java 11 or later on `PATH`. The first run downloads `tla2tools.jar` v1.7.4 (pinned by SHA-256) into `node_modules/.cache/verify-poll-delivery/`, which also holds each config's TLC output. After `npm ci` it downloads it again.
+It needs Java 11 or later on `PATH`. The first run downloads `tla2tools.jar` v1.7.4 (pinned by SHA-256) into `node_modules/.cache/verify-poll-delivery/`, which also holds each config's TLC output.
 
 Each config prints `ok` when TLC gives the result the script expects, or `CHANGED`, and the script exits 1 on any `CHANGED`. It also lists covered files that changed since the sync commit.
 

@@ -1,0 +1,5 @@
+allowBuilds:
+  esbuild: false
+  workerd: false
+# Keeps pnpm-lock.yaml single-document so Dependabot can read it: https://pnpm.io/lockfile
+pmOnFail: ignore
