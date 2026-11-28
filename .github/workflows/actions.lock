@@ -5,14 +5,13 @@ version: 'v0.0.3'
 workflows:
     '.github/workflows/ci.yml':
         - 'actions/checkout@v7.0.1'
-        - 'actions/setup-node@v7.1.0'
-        - 'pnpm/action-setup@v6.1.1'
+        - 'pnpm/setup@v3.2.0'
     '.github/workflows/pages.yml':
         - 'actions/checkout@v7.0.1'
         - 'actions/deploy-pages@v5.0.1'
         - 'actions/setup-node@v7.1.0'
         - 'actions/upload-pages-artifact@v5.0.0'
-        - 'pnpm/action-setup@v6.1.1'
+        - 'pnpm/setup@v3.2.0'
     '.github/workflows/pr-title.yml': []
     '.github/workflows/release.yml':
         - 'actions/create-github-app-token@v3.3.0'
@@ -55,8 +54,8 @@ dependencies:
         commit: 'sha1-45996ed1f6d02564a971a2fa1b5860e934307cf7'
         owner_id: 16785467
         repo_id: 262236530
-    'pnpm/action-setup@v6.1.1':
-        ref: 'v6.1.1'
-        commit: 'sha1-73e46992e05b19abd31f2f3c20e0e7370d762115'
+    'pnpm/setup@v3.2.0':
+        ref: 'v3.2.0'
+        commit: 'sha1-731dfb6463bbd11c11fd0ee11fe00ed0e36d48a1'
         owner_id: 21320719
-        repo_id: 262289747
+        repo_id: 1235693694
