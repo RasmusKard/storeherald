@@ -38,7 +38,7 @@ listener_ok() { # port, owning process group: every listener on the port is in t
 }
 
 launch() {
-  [ -x "$REPO/node_modules/.bin/wrangler" ] || die "no wrangler in $REPO/node_modules: run npm ci there first"
+  [ -x "$REPO/node_modules/.bin/wrangler" ] || die "no wrangler in $REPO/node_modules: run pnpm install --frozen-lockfile there first"
   local run="$ROOT/$(date +%Y%m%d-%H%M%S)-$$"
   mkdir -p "$run/evidence" "$run/state"
   touch "$run/evidence/captured.jsonl" "$run/evidence/requests.jsonl"

@@ -25,16 +25,16 @@ When a target fails:
 
 ## Install
 
-Needs Node 24 or later and a Cloudflare account. Deploy a release, not `main`: the [config reference](https://rasmuskard.github.io/storeherald/interfaces/ConfigFile.html) describes the latest release.
+Needs Node 24 or later, [pnpm](https://pnpm.io/installation) and a Cloudflare account. Deploy a release, not `main`: the [config reference](https://rasmuskard.github.io/storeherald/interfaces/ConfigFile.html) describes the latest release.
 
 ```sh
 git clone https://github.com/RasmusKard/storeherald.git
 cd storeherald
 git checkout "$(git tag --sort=-v:refname | head -1)"
-npm ci
+pnpm install --frozen-lockfile
 ```
 
-To upgrade, run `git fetch --tags`, check out the newest tag the same way, then run `npm ci` and `npx wrangler deploy`. [`CHANGELOG.md`](CHANGELOG.md) lists each release's changes.
+To upgrade, run `git fetch --tags`, check out the newest tag the same way, then run `pnpm install --frozen-lockfile` and `pnpm exec wrangler deploy`. [`CHANGELOG.md`](CHANGELOG.md) lists each release's changes.
 
 ## Usage
 
@@ -42,16 +42,16 @@ To upgrade, run `git fetch --tags`, check out the newest tag the same way, then 
 2. Set the config and every variable it references as secrets:
 
    ```sh
-   npx wrangler secret put STOREHERALD_CONFIG < config.yaml
-   npx wrangler secret put EAS_WEBHOOK_SECRET
+   pnpm exec wrangler secret put STOREHERALD_CONFIG < config.yaml
+   pnpm exec wrangler secret put EAS_WEBHOOK_SECRET
    ```
 
 3. If you neither use Google Play nor set `asc.appId`, remove `triggers` and `kv_namespaces` from [`wrangler.jsonc`](wrangler.jsonc). Otherwise set its cron schedule to how often to poll, at most every 10 minutes: a slow run can overlap the next and post a change twice.
-4. Deploy with `npx wrangler deploy`. It prints the Worker's URL.
+4. Deploy with `pnpm exec wrangler deploy`. It prints the Worker's URL.
 5. [Connect the sources](#sources).
 6. Logs are JSON lines in the Worker's logs. Alert on those with `"level":"error"` and point your uptime check at `GET /health_check`, which fails when the config does.
 
-To run it locally, put the variables in `.dev.vars` and run `npx wrangler dev`. Wrangler expands `${VAR}` in `.dev.vars` itself, so write `\${VAR}` there.
+To run it locally, put the variables in `.dev.vars` and run `pnpm exec wrangler dev`. Wrangler expands `${VAR}` in `.dev.vars` itself, so write `\${VAR}` there.
 
 To host it yourself, run it on [celld](https://github.com/denoland/celld). celld refuses the `observability` key and needs an `id` on the KV namespace, so remove the one and add the other in `wrangler.jsonc`. It doesn't expand `${VAR}` in `.dev.vars`, so write it there unescaped.
 
